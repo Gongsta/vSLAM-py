@@ -1,6 +1,6 @@
 cython
-numpy==1.22.1
+numpy
 opencv-python
 pyopengl
 numba
-scipy
+scipy==1.9.3
