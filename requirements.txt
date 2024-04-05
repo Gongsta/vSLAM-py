@@ -3,4 +3,5 @@ numpy
 opencv-python
 pyopengl
 numba
+matplotlib
 scipy==1.9.3
