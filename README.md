@@ -9,6 +9,17 @@ Sources of inspiration:
 
 These implementations don't have any real-time promises. My goal was to create something that can run in real-time.
 
+Usage
+```
+pip install -r requirements.txt
+```
+
+Run the monocular camera visual odometry:
+```
+python3 main_mono_camera.py
+```
+
+
 
 ### OpenCV with CUDA support
 If you want this to run fast, you should use hardware acceleration. I am using OpenCV with CUDA support. Unfortunately, OpenCV with CUDA needs to be built from source. You'll need to make sure that you have CUDA

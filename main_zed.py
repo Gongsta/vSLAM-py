@@ -14,7 +14,6 @@ import time
 import pyzed.sl as sl
 
 import cv2
-from numba import cuda
 from matplotlib import pyplot as plt
 CUDA = False
 if CUDA:
