@@ -1,7 +1,5 @@
 import cv2
-from collections import deque
 import numpy as np
-from scipy.optimize import least_squares
 
 NUM_DISPARITIES = 128
 CUDA = False
@@ -25,7 +23,7 @@ class VisualOdometry:
     I could make two different child classes. Right now, just bake them into the same parent class, and overload
     the function. Because monocular depth estimation is a thing.
 
-    also moved these into a helper function as opposed to making them methods, but those standalone
+    also could have moved these into a helper function as opposed to making them methods, but those standalone
     functions would not have context.
     - However, whatever methods are shared into a superclass, and those that are not shared into the child
     class also isn't the best, because really these algorithms are at the same level of abstraction. Things
@@ -397,8 +395,6 @@ class VisualOdometry:
                         good_matches.append(m)
             except ValueError:
                 pass
-            print(len(good_matches))
-            # print(good_matches[:10])
 
         for match in good_matches:
             matched_kpts_t_1.append(list(kpts_t_1[match.queryIdx].pt))

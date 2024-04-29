@@ -1,12 +1,13 @@
 # vSLAM-py
-A lightweight implementation of Visual SLAM in Python designed to run in real-time.
+A lightweight implementation of Visual SLAM in Python designed to run in real-time. Stopped after implementating visual odometry (feature detection, matching and calculating essential matrix). No mapping / bundle adjustment. Built on top of OpenCV for features detection.
 
-
-Built on top of OpenCV for features lighting, and g2o (loop-closure).
 
 Sources of inspiration:
 - [pyslam](https://github.com/luigifreda/pyslam/tree/master)
-- 
+- [twitchslam](https://github.com/geohot/twitchslam/blob/master/slam.py)
+- https://github.com/niconielsen32/ComputerVision
+
+These implementations don't have any real-time promises. My goal was to create something that can run in real-time.
 
 
 ### OpenCV with CUDA support
@@ -61,6 +62,10 @@ cmake -D CMAKE_BUILD_TYPE=RELEASE \
 
 
 ### Older
+`main_zed.py` was my attempt at not using any form of abstractions. Just have all of it there. It's not very readable. I also tried using VPI,
+but it's very annoying to use, and there are discrepancies with OpenCV implementation. Could not replicate results.
+
+Installation
 ```
 VPI for hardware-accelerated image processing
 ```bash
@@ -72,9 +77,6 @@ You might have VPI3 if you are on the latest. In which case run
 ```bash
 sudo apt install python3.9-vpi3
 ```
-
-
-
 
 #### Setting up the zed
 ```

@@ -16,7 +16,7 @@ import pyzed.sl as sl
 import cv2
 from numba import cuda
 from matplotlib import pyplot as plt
-CUDA = True
+CUDA = False
 if CUDA:
     from cv2 import cuda_ORB as ORB
     # from cv2 import cuda_StereoSGM as StereoSGBM # Too slow

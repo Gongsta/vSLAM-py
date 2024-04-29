@@ -12,7 +12,9 @@ import os
 import time
 import urllib.request
 import cv2
+from numba import cuda
 from matplotlib import pyplot as plt
+
 
 def main():
     parser = ArgumentParser()
@@ -20,6 +22,7 @@ def main():
     args = parser.parse_args()
 
     capLeft = cv2.VideoCapture("KITTI_sequence_1/image_l/%6d.png")
+    capRight = cv2.VideoCapture("KITTI_sequence_1/image_l/%6d.png")
 
     gt_poses = []
     with open(os.path.join("KITTI_sequence_1", "poses.txt"), "r") as f:
@@ -46,14 +49,17 @@ def main():
     curr_pose = None
     while capLeft.isOpened() and running:
         ret, cv_img_left = capLeft.read()
+        ret, cv_img_right = capRight.read()
         if ret:
             start = time.time()
+            # curr_pose = vo.process_frame(cv_img_left, cv_img_right)
 
             T = vo.process_frame(cv_img_left)
             if curr_pose is None:
                 curr_pose = gt_poses[0]
             else:
                 curr_pose = np.matmul(curr_pose, np.linalg.inv(T))
+                # curr_pose = np.matmul(T, curr_pose)
 
             pred_path.append((curr_pose[0, 3], curr_pose[2, 3]))
 
@@ -69,6 +75,7 @@ def main():
             running = False
 
     capLeft.release()
+    capRight.release()
     cv2.destroyAllWindows()
 
     gt_path = [(gt_pose[0, 3], gt_pose[2, 3]) for gt_pose in gt_poses]
