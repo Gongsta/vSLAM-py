@@ -1,0 +1,3 @@
+[submodule "opencv_vpi"]
+	path = opencv_vpi
+	url = git@github.com:Gongsta/opencv_vpi.git
