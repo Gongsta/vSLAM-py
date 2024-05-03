@@ -1,7 +1,5 @@
-cython
-numpy
 opencv-python
-pyopengl
-numba
+g2o-python
+numpy
 matplotlib
 scipy==1.9.3
