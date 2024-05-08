@@ -13,7 +13,7 @@ from scipy.spatial.transform import Rotation
 
 from visualodometry import VisualOdometry
 
-POSITION_PLOT = True
+POSITION_PLOT = False
 
 if POSITION_PLOT:
     plt.ion()
@@ -31,7 +31,6 @@ if POSITION_PLOT:
 
 
 def main():
-
     parser = ArgumentParser()
     parser.add_argument("--visualize", default=True, action="store_true", help="Show visualization")
     args = parser.parse_args()
@@ -67,8 +66,6 @@ def main():
         ret, cv_img_left = capLeft.read()
         if ret:
             start = time.time()
-            # curr_pose = vo.process_frame(cv_img_left, cv_img_right)
-
             T = vo.process_frame(cv_img_left)
             if curr_pose is None:
                 curr_pose = np.eye(4)
@@ -87,7 +84,9 @@ def main():
                 angles = r.as_euler("zyx", degrees=True)
                 # Plot the new orientation
                 Q.remove()
-                Q = ax1.quiver(x_t[-1], y_t[-1], z_t[-1], angles[0], angles[1], angles[2], color="red")
+                Q = ax1.quiver(
+                    x_t[-1], y_t[-1], z_t[-1], angles[0], angles[1], angles[2], color="red"
+                )
                 # Q = ax1.quiver(x_t[-1], y_t[-1], z_t[-1], curr_pose[:3, 0], curr_pose[:3, 1], curr_pose[:3, 2], color="red")
 
                 points.set_data(x_t, y_t)
@@ -96,14 +95,14 @@ def main():
                 # redraw just the points
                 fig.canvas.draw()
 
+            key = cv2.waitKey(1)
+            if key == "q":
+                running = False
+                break
             curr = time.time()
             latency = 1.0 / (curr - start)
             print(f"Running at {latency} hz")
             start = curr
-            key = cv2.waitKey(10)
-            if key == "q":
-                running = False
-                break
         else:
             running = False
 
