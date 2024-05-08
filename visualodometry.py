@@ -1,12 +1,13 @@
 import cv2
 import numpy as np
+from enum import Enum
 
 NUM_DISPARITIES = 128
 
 CUDA = False
 if CUDA:
     from cv2 import cuda_ORB as ORB
-    # from cv2 import cuda_StereoSGM as StereoSGBM # Too slow
+    # from cv2 import cuda_StereoSGM as StereoSGBM  # Too slow
     from opencv_vpi.disparity import StereoSGBM
 
 else:
@@ -16,9 +17,17 @@ else:
 # cv2.setRNGSeed(0)
 # np.random.seed(0)
 
+"""
+There are several methods to calculate camera motion:
+- 2D-2D (monocular camera): Uses two sets of 2D points (at t-1 and t) to estimate camera motion. This is solved through epipolar geometry.
+- 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
+- 3D-2D (depth/stereo camera): Uses 3D points (at t-1) and 2D points (at t) to estimate camera motion. This is solved through PnP.
+    - PnP itself can be solved in many ways, such as DLT, P3P, etc.
+"""
+VOMethod = Enum("VOMethod", ["VO_2D_2D", "VO_3D_2D", "VO_3D_3D"])
+
+
 class VisualOdometry:
-    """
-    """
 
     def __init__(self, cx, cy, fx, baseline=0) -> None:
         # --------- General Parameters ---------
@@ -191,29 +200,33 @@ class VisualOdometry:
                 print("Optimization failed", e)
                 return np.eye(4)  # identity matrix
 
-    def process_frame(self, img_left, img_right=None):
+    def process_frame(self, img_left, img_right=None, depth=None, method=VOMethod.VO_3D_2D):
         """
         Three main ways to proceed:
         1. 2D-2D (Solve Epipolar geometry by computing essential matrix)
         2. 3D-2D (solve with PnP)
         3. 3D-3D (solve with ICP)
+        - If no depth image is provided, the depth is computed by disparity
+
+        if CUDA flag is true, images as by default a cv2.cuda_GpuMat. Memory is abstracted away, so you focus on
+        computation.
+
         """
 
-        if img_right is None:
+        if img_right is None and depth is None:
             return self.process_frame_mono(img_left)
-
-        self.img_left_queue.append(img_left)
 
         # ---------- Convert to Grayscale -----------
         img_left_gray = self._convert_grayscale(img_left)
         img_right_gray = self._convert_grayscale(img_right)
 
-        # ---------- Compute Disparity -----------
-        disparity = self.disparity_estimator.compute(img_left_gray, img_right_gray)
-        self.disparity_queue.append(disparity)
+        self.img_left_queue.append(img_left_gray)
 
-        if self.visualize:
-            self._compute_and_display_depth_viz(disparity)
+        # # ---------- Compute Disparity -----------
+        disparity = self.disparity_estimator.compute(img_left_gray, img_right_gray)
+        cv2.imshow("disparity", disparity / 255.0)
+        # depth = self._compute_depth_from_disparity(disparity)
+        # self.disparity_queue.append(disparity)
 
         # ---------- Compute and Match Keypoints (kpts) across frames -----------
         if len(self.img_left_queue) >= 2:
@@ -222,71 +235,71 @@ class VisualOdometry:
 
             matched_kpts_t_1, matched_kpts_t = self._detect_and_match_2d_kpts(img_t_1, img_t)
 
-            disparity_t_1 = self.disparity_queue[-2]
-            disparity_t = self.disparity_queue[-1]
+        #     disparity_t_1 = self.disparity_queue[-2]
+        #     disparity_t = self.disparity_queue[-1]
 
-            # ---------- Non-Linear Least Squares Solving -----------
-            F1, F2, W1, W2 = self._project_2d_kpts_to_3d(
-                disparity_t_1, disparity_t, matched_kpts_t_1, matched_kpts_t
-            )
+        #     # ---------- Non-Linear Least Squares Solving -----------
+        #     F1, F2, W1, W2 = self._project_2d_kpts_to_3d(
+        #         disparity_t_1, disparity_t, matched_kpts_t_1, matched_kpts_t
+        #     )
 
-            # ---------- Essential Matrix ----------
-            ransac_method = cv2.RANSAC
-            kRansacThresholdNormalized = (
-                0.0003  # metric threshold used for normalized image coordinates
-            )
-            kRansacProb = 0.999
+        #     # ---------- Essential Matrix ----------
+        #     ransac_method = cv2.RANSAC
+        #     kRansacThresholdNormalized = (
+        #         0.0003  # metric threshold used for normalized image coordinates
+        #     )
+        #     kRansacProb = 0.999
 
-            # the essential matrix algorithm is more robust since it uses the five-point algorithm solver by D. Nister (see the notes and paper above )
-            try:
-                E, mask = cv2.findEssentialMat(F1, F2, self.K, cv2.RANSAC, 0.5, 3.0, None)
-                _, R, t, mask = cv2.recoverPose(E, F1, F2, focal=1, pp=(0.0, 0.0))
+        #     # the essential matrix algorithm is more robust since it uses the five-point algorithm solver by D. Nister (see the notes and paper above )
+        #     try:
+        #         E, mask = cv2.findEssentialMat(F1, F2, self.K, cv2.RANSAC, 0.5, 3.0, None)
+        #         _, R, t, mask = cv2.recoverPose(E, F1, F2, focal=1, pp=(0.0, 0.0))
 
-                scale_factor = 0.1  # replace with actual scale factor
-                t_scaled = t * scale_factor
+        #         scale_factor = 0.1  # replace with actual scale factor
+        #         t_scaled = t * scale_factor
 
-                T = np.eye(4)
-                T[:3, :3] = R
-                T[:3, 3] = t_scaled.flatten()
+        #         T = np.eye(4)
+        #         T[:3, :3] = R
+        #         T[:3, 3] = t_scaled.flatten()
 
-                self.curr_pos = np.matmul(T, self.curr_pos)
-                self.x_t.append(self.curr_pos[0])
-                self.y_t.append(self.curr_pos[1])
-                self.z_t.append(self.curr_pos[2])
+        #         self.curr_pos = np.matmul(T, self.curr_pos)
+        #         self.x_t.append(self.curr_pos[0])
+        #         self.y_t.append(self.curr_pos[1])
+        #         self.z_t.append(self.curr_pos[2])
 
-                return self.curr_pos
+        #         return self.curr_pos
 
-                # if POSITION_PLOT:
-                #     points.set_data(x_t, y_t)
-                #     points.set_3d_properties(z_t)  # update the z data
-                #     points2.set_data(x_t, y_t)
-                #     # redraw just the points
-                #     fig.canvas.draw()
+        #         # if POSITION_PLOT:
+        #         #     points.set_data(x_t, y_t)
+        #         #     points.set_3d_properties(z_t)  # update the z data
+        #         #     points2.set_data(x_t, y_t)
+        #         #     # redraw just the points
+        #         #     fig.canvas.draw()
 
-                # Cannot move faster than 0.5m
-                lower_bounds = [-0.5, -0.5, -0.5, -1.0, -1.0, -1.0, -1.0]
-                upper_bounds = [0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0]
+        #         # Cannot move faster than 0.5m
+        #         lower_bounds = [-0.5, -0.5, -0.5, -1.0, -1.0, -1.0, -1.0]
+        #         upper_bounds = [0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0]
 
-                # res = least_squares(minimize, PAR0, args=(F1, F2, W1, W2, P),
-                #                      bounds=(lower_bounds, upper_bounds))
-                # print(F1.shape)
-                # res = least_squares(minimize, PAR0, args=(F1, F2, W1, W2, P),
-                #                     method="lm")
-                # print("res.x", res.x)
-                # curr_x += res.x[0]
-                # curr_y += res.x[1]
-                # curr_z += res.x[2]
-                # x_t.append(curr_x)
-                # y_t.append(curr_y)
-                # z_t.append(curr_z)
+        #         # res = least_squares(minimize, PAR0, args=(F1, F2, W1, W2, P),
+        #         #                      bounds=(lower_bounds, upper_bounds))
+        #         # print(F1.shape)
+        #         # res = least_squares(minimize, PAR0, args=(F1, F2, W1, W2, P),
+        #         #                     method="lm")
+        #         # print("res.x", res.x)
+        #         # curr_x += res.x[0]
+        #         # curr_y += res.x[1]
+        #         # curr_z += res.x[2]
+        #         # x_t.append(curr_x)
+        #         # y_t.append(curr_y)
+        #         # z_t.append(curr_z)
 
-                # points.set_data(x_t, y_t)
-                # points.set_3d_properties(z_t)  # update the z data
-                # # redraw just the points
-                # fig.canvas.draw()
+        #         # points.set_data(x_t, y_t)
+        #         # points.set_3d_properties(z_t)  # update the z data
+        #         # # redraw just the points
+        #         # fig.canvas.draw()
 
-            except Exception as e:
-                print("Optimization failed", e)
+        #     except Exception as e:
+        #         print("Optimization failed", e)
 
     def _compute_orb(self, img_t):
         if CUDA:
@@ -305,7 +318,7 @@ class VisualOdometry:
 
     def _convert_grayscale(self, img):
         if CUDA:
-            if type(img) == cv2.Mat:
+            if type(img) == cv2.Mat or type(img) == np.ndarray:
                 img = cv2.cuda_GpuMat(img)
 
             img_gray = cv2.cuda.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -323,41 +336,44 @@ class VisualOdometry:
 
         return matched_kpts_t_1, matched_kpts_t
 
-    def _compute_and_display_depth_viz(self, disparity):
+    def _compute_depth_from_disparity(self, disparity):
         cv_depth_map = self.fx * self.baseline / disparity
 
-        # Clip max distance of 2.0 for visualization
-        _, depth_viz = cv2.threshold(cv_depth_map, 2.0, 2.0, cv2.THRESH_TRUNC)
-        depth_viz = cv2.normalize(depth_viz, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        if self.visualize:
+            # Clip max distance of 2.0 for visualization
+            _, depth_viz = cv2.threshold(cv_depth_map, 2.0, 2.0, cv2.THRESH_TRUNC)
+            depth_viz = cv2.normalize(depth_viz, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
-        # Apply TURBO colormap to turn the depth map into color, blue=close, red=far
-        depth_viz = cv2.applyColorMap(depth_viz, cv2.COLORMAP_TURBO)
+            # Apply TURBO colormap to turn the depth map into color, blue=close, red=far
+            depth_viz = cv2.applyColorMap(depth_viz, cv2.COLORMAP_TURBO)
 
-        # Calculate middle coordinates
-        mid_x = cv_depth_map.shape[1] // 2
-        mid_y = cv_depth_map.shape[0] // 2
+            # Calculate middle coordinates
+            mid_x = cv_depth_map.shape[1] // 2
+            mid_y = cv_depth_map.shape[0] // 2
 
-        # Select two points around the middle
-        depth_points = [(mid_x - 100, mid_y), (mid_x + 100, mid_y)]
+            # Select two points around the middle
+            depth_points = [(mid_x - 100, mid_y), (mid_x + 100, mid_y)]
 
-        # Get the depth values at the selected points
-        depth_values = [cv_depth_map[y, x] for x, y in depth_points]
+            # Get the depth values at the selected points
+            depth_values = [cv_depth_map[y, x] for x, y in depth_points]
 
-        # Annotate the depth values on the image
-        for (x, y), depth in zip(depth_points, depth_values):
-            depth_str = str(round(depth, 2))  # Round to 2 decimal places
-            cv2.putText(
-                depth_viz,
-                depth_str,
-                (x, y),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 0, 0),
-                2,
-                cv2.LINE_AA,
-            )
+            # Annotate the depth values on the image
+            for (x, y), depth in zip(depth_points, depth_values):
+                depth_str = str(round(depth, 2))  # Round to 2 decimal places
+                cv2.putText(
+                    depth_viz,
+                    depth_str,
+                    (x, y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 0),
+                    2,
+                    cv2.LINE_AA,
+                )
 
-        cv2.imshow("Depth", depth_viz)
+            cv2.imshow("Depth", depth_viz)
+
+        return cv_depth_map
 
     def _match_2d_kpts(self, kpts_t_1, kpts_t, desc_t_1, desc_t):
         matched_kpts_t_1 = []
