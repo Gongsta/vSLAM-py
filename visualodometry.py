@@ -2,10 +2,10 @@ import cv2
 import numpy as np
 
 NUM_DISPARITIES = 128
+
 CUDA = False
 if CUDA:
     from cv2 import cuda_ORB as ORB
-
     # from cv2 import cuda_StereoSGM as StereoSGBM # Too slow
     from opencv_vpi.disparity import StereoSGBM
 
@@ -18,24 +18,6 @@ else:
 
 class VisualOdometry:
     """
-    Mono and stereo visual odometry share many of the same techniques.
-
-    I could make two different child classes. Right now, just bake them into the same parent class, and overload
-    the function. Because monocular depth estimation is a thing.
-
-    also could have moved these into a helper function as opposed to making them methods, but those standalone
-    functions would not have context.
-    - However, whatever methods are shared into a superclass, and those that are not shared into the child
-    class also isn't the best, because really these algorithms are at the same level of abstraction. Things
-    that are at the same level of abstraction should be in the same place.
-
-    Even like projecting 2d to 3d can be put in the parent class. So maybe just do function overloading
-
-    There are many ways to implement visual odometry. Technically, monocular
-    depth estimation is a thing, and so you can implement stereo visual odometry as stereo.
-
-    I also think Mono visual odometry is really cool to just try on your computer using your webcam.
-    Everyone has a webcam, so no reason not to just try it.
     """
 
     def __init__(self, cx, cy, fx, baseline=0) -> None:
@@ -70,9 +52,9 @@ class VisualOdometry:
             [[1, 0, 0, -cx], [0, 1, 0, -cy], [0, 0, 0, -fx], [0, 0, -1.0 / baseline, 0]]
         )
 
-        # self.orb = ORB.create(nlevels=3, nfeatures=88 * 3)
         self.orb = ORB.create(3000)
 
+        ### Feature Matcher
         self.bf_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
         FLANN_INDEX_LSH = 6
@@ -179,6 +161,7 @@ class VisualOdometry:
             F1, F2 = matched_kpts_t_1, matched_kpts_t
 
             try:
+                # Epipolar Geometry
                 # E, mask = cv2.findEssentialMat(F1, F2, self.K, cv2.RANSAC, 0.5, 3.0, None)
                 E, mask = cv2.findEssentialMat(F1, F2, self.K, threshold=1)
 
@@ -209,6 +192,13 @@ class VisualOdometry:
                 return np.eye(4)  # identity matrix
 
     def process_frame(self, img_left, img_right=None):
+        """
+        Three main ways to proceed:
+        1. 2D-2D (Solve Epipolar geometry by computing essential matrix)
+        2. 3D-2D (solve with PnP)
+        3. 3D-3D (solve with ICP)
+        """
+
         if img_right is None:
             return self.process_frame_mono(img_left)
 
