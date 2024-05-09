@@ -2,6 +2,37 @@
 import numpy as np
 import os
 import cv2
+import urllib.request
+import math
+
+
+def download_file(url, save_path):
+    """Download a file from a URL and save it locally using urllib.request."""
+    try:
+        print(f"Downloading {url} to {save_path}")
+        with urllib.request.urlopen(url) as response:
+            content = response.read()
+            with open(save_path, 'wb') as file:
+                file.write(content)
+    except urllib.error.URLError as e:
+        print(f"Failed to download {url}. Reason: {str(e)}")
+
+def rotation_matrix_to_euler(R):
+    if R[2][0] < 1:
+        if R[2][0] > -1:
+            theta_y = math.asin(R[2][0])
+            theta_x = math.atan2(-R[2][1], R[2][2])
+            theta_z = math.atan2(-R[1][0], R[0][0])
+        else:  # R[2][0] = -1
+            theta_y = -math.pi/2
+            theta_x = -math.atan2(R[1][2], R[1][1])
+            theta_z = 0
+    else:  # R[2][0] = 1
+        theta_y = math.pi/2
+        theta_x = math.atan2(R[1][2], R[1][1])
+        theta_z = 0
+
+    return (theta_x, theta_y, theta_z)  # Return Euler angles in radians
 
 
 def minimize(PAR, F1, F2, W1, W2, P1):

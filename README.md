@@ -1,5 +1,5 @@
 # vSLAM-py
-A lightweight implementation of Visual SLAM in Python designed to run in real-time. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++ (too tedious to write in, abandoned after writing the frontend).
+A lightweight implementation of real-time Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++ (too tedious to write in, abandoned after writing the frontend).
 
 Uses the following libraries (installed through `pip`):
 - NumPy (for basic linear algebra)
@@ -14,7 +14,6 @@ Sources of inspiration:
 - https://github.com/niconielsen32/ComputerVision
 
 
-The above implementations don't have any real-time promises. My goal was to create something that can run in real-time.
 
 ## Installation
 Getting started is super straightforward.

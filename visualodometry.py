@@ -1,12 +1,12 @@
 import cv2
 import numpy as np
 from enum import Enum
-
-NUM_DISPARITIES = 128
+import g2o
 
 CUDA = False
 if CUDA:
     from cv2 import cuda_ORB as ORB
+
     # from cv2 import cuda_StereoSGM as StereoSGBM  # Too slow
     from opencv_vpi.disparity import StereoSGBM
 
@@ -14,17 +14,23 @@ else:
     from cv2 import ORB
     from cv2 import StereoSGBM
 
-# cv2.setRNGSeed(0)
-# np.random.seed(0)
+
+import matplotlib.pyplot as plt
+from visualization import Visualizer3D
 
 """
 There are several methods to calculate camera motion:
 - 2D-2D (monocular camera): Uses two sets of 2D points (at t-1 and t) to estimate camera motion. This is solved through epipolar geometry.
-- 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
 - 3D-2D (depth/stereo camera): Uses 3D points (at t-1) and 2D points (at t) to estimate camera motion. This is solved through PnP.
     - PnP itself can be solved in many ways, such as DLT, P3P, etc.
+- 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
 """
-VOMethod = Enum("VOMethod", ["VO_2D_2D", "VO_3D_2D", "VO_3D_3D"])
+
+
+class VOMethod(Enum):
+    VO_2D_2D = 1
+    VO_3D_2D = 2
+    VO_3D_3D = 3
 
 
 class VisualOdometry:
@@ -32,22 +38,25 @@ class VisualOdometry:
     def __init__(self, cx, cy, fx, baseline=0) -> None:
         # --------- General Parameters ---------
         self.visualize = True
+        self.vis = Visualizer3D()
 
         # --------- Image Queues ---------
         self.img_left_queue = []
-        self.disparity_queue = []
+        self.depth_queue = []
 
         # --------- Detectors ---------
         self.disparity_estimator = StereoSGBM.create(
-            minDisparity=0, numDisparities=NUM_DISPARITIES, blockSize=5
+            minDisparity=0, numDisparities=128, blockSize=5
         )
 
         # --------- States for Non-linear Optimization ---------
         self.PAR0 = np.array([0, 0, 0, 1, 0, 0, 0])
-        self.curr_pos = np.array([0, 0, 0, 1])
-        self.x_t = []
-        self.y_t = []
-        self.z_t = []
+
+        # --------- Store History for visualization ---------
+        self.curr_position = np.array([0, 0, 0, 1])  # homogeneous coordinates
+        self.curr_orientation = np.eye(3)
+        self.positions = []
+        self.orientations = []
 
         # --------- Camera Parameters and Matrices ---------
         self.cx = cx
@@ -57,6 +66,7 @@ class VisualOdometry:
 
         self.P = np.array([[fx, 0, cx, 0], [0, fx, cy, 0], [0, 0, 1, 0]])
         self.K = np.array([[fx, 0, cx], [0, fx, cy], [0, 0, 1]])
+        self.K_inv = np.linalg.inv(self.K)
         self.Q = np.array(
             [[1, 0, 0, -cx], [0, 1, 0, -cy], [0, 0, 0, -fx], [0, 0, -1.0 / baseline, 0]]
         )
@@ -157,20 +167,47 @@ class VisualOdometry:
 
         return [R1, t]
 
-    def process_frame_mono(self, img_left):
-        # ---------- Convert to Grayscale -----------
-        # img_left_gray = self._convert_grayscale(img_left)
-        self.img_left_queue.append(img_left)
+    def process_frame(self, img_left, img_right=None, depth=None, method=VOMethod.VO_3D_2D):
+        """
+        Three main ways to proceed:
+        1. 2D-2D (Solve Epipolar geometry by computing essential matrix)
+        2. 3D-2D (solve with PnP)
+        3. 3D-3D (solve with ICP) (not currently implemented)
+        - If no depth image is provided, the depth is computed by disparity
 
-        if len(self.img_left_queue) >= 2:
-            img_t_1 = self.img_left_queue[-2]
-            img_t = self.img_left_queue[-1]
 
-            matched_kpts_t_1, matched_kpts_t = self._detect_and_match_2d_kpts(img_t_1, img_t)
+        if CUDA flag is true, images as by default a cv2.cuda_GpuMat. Memory is abstracted away, so you focus on
+        computation.
+
+        """
+        # ---------- Convert Image to Grayscale -----------
+        img_left_gray = self._convert_grayscale(img_left)
+        self.img_left_queue.append(img_left_gray)
+
+        # ---------- Compute Depth Image (if needed) -----------
+        if method != VOMethod.VO_2D_2D:
+            if depth is None:
+                img_right_gray = self._convert_grayscale(img_right)
+                disparity = self.disparity_estimator.compute(img_left_gray, img_right_gray)
+                depth = self._compute_depth_from_disparity(disparity)
+
+            depth[depth < 0.0] = np.nan  # cleanup negative depth values
+            self.depth_queue.append(depth)
+
+        if len(self.img_left_queue) < 2:
+            return
+
+        # ---------- Compute and Match Keypoints (kpts) across frames -----------
+        img_left_t_1 = self.img_left_queue[-2]  # image at time t-1
+        img_left_t = self.img_left_queue[-1]  # image at time t
+
+        matched_kpts_t_1, matched_kpts_t = self._detect_and_match_2d_kpts(img_left_t_1, img_left_t)
+
+        # ---------- Solve for camera motion -----------
+        if method == VOMethod.VO_2D_2D:
+            # 2D-2D - Solve through Epipolar Geometry
             F1, F2 = matched_kpts_t_1, matched_kpts_t
-
             try:
-                # Epipolar Geometry
                 # E, mask = cv2.findEssentialMat(F1, F2, self.K, cv2.RANSAC, 0.5, 3.0, None)
                 E, mask = cv2.findEssentialMat(F1, F2, self.K, threshold=1)
 
@@ -182,62 +219,95 @@ class VisualOdometry:
                 # scale_factor = 0.1  # replace with actual scale factor
                 # t_scaled = t * scale_factor
                 T = self._form_transf(R, np.squeeze(t))
-                return T
-
-                # T = np.eye(4)
-                # T[:3, :3] = R
-                # T[:3, 3] = t_scaled.flatten()
-
-                # self.curr_pos = np.matmul(T, self.curr_pos)
-                # self.x_t.append(self.curr_pos[0])
-                # self.y_t.append(self.curr_pos[1])
-                # self.z_t.append(self.curr_pos[2])
-
-                # return self.curr_pos
-                return T
 
             except Exception as e:
                 print("Optimization failed", e)
                 return np.eye(4)  # identity matrix
 
-    def process_frame(self, img_left, img_right=None, depth=None, method=VOMethod.VO_3D_2D):
-        """
-        Three main ways to proceed:
-        1. 2D-2D (Solve Epipolar geometry by computing essential matrix)
-        2. 3D-2D (solve with PnP)
-        3. 3D-3D (solve with ICP)
-        - If no depth image is provided, the depth is computed by disparity
+        elif method == VOMethod.VO_3D_2D:
+            # 3D-2D - Solve by minimizing the reprojection error
 
-        if CUDA flag is true, images as by default a cv2.cuda_GpuMat. Memory is abstracted away, so you focus on
-        computation.
+            # use depth_t_1 and matched_kpts_t to solve for camera motion
+            depth_t_1 = self.depth_queue[-2]
 
-        """
+            optimizer = g2o.SparseOptimizer()
+            solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())
+            # TODO: Try PCG solver?
+            solver = g2o.OptimizationAlgorithmLevenberg(solver)
+            optimizer.set_algorithm(solver)
 
-        if img_right is None and depth is None:
-            return self.process_frame_mono(img_left)
+            cam = g2o.CameraParameters(self.fx, (self.cx, self.cy), 0)
+            cam.set_id(0)
+            optimizer.add_parameter(cam)
 
-        # ---------- Convert to Grayscale -----------
-        img_left_gray = self._convert_grayscale(img_left)
-        img_right_gray = self._convert_grayscale(img_right)
+            # Add camera pose
+            pose = g2o.SE3Quat()
+            vertex_pose = g2o.VertexSE3Expmap()
+            vertex_pose.set_id(0)
+            vertex_pose.set_estimate(pose)
+            optimizer.add_vertex(vertex_pose)
 
-        self.img_left_queue.append(img_left_gray)
+            # TODO: vectorize
+            points = []
+            for i, point_2d in enumerate(matched_kpts_t):
+                old_point_2d = matched_kpts_t_1[i]
+                z = depth_t_1[int(old_point_2d[1]), int(old_point_2d[0])]
+                if np.isnan(z):
+                    continue
 
-        # # ---------- Compute Disparity -----------
-        disparity = self.disparity_estimator.compute(img_left_gray, img_right_gray)
-        cv2.imshow("disparity", disparity / 255.0)
-        # depth = self._compute_depth_from_disparity(disparity)
-        # self.disparity_queue.append(disparity)
+                # Convert 2D point with depth to 3D in camera frame. Camera initial pose is just identity
+                point_3d = self.K_inv @ (
+                    z
+                    * np.array(
+                        [
+                            old_point_2d[0],
+                            old_point_2d[1],
+                            1,
+                        ]
+                    )
+                )
+                points.append(point_3d)
 
-        # ---------- Compute and Match Keypoints (kpts) across frames -----------
-        if len(self.img_left_queue) >= 2:
-            img_t_1 = self.img_left_queue[-2]
-            img_t = self.img_left_queue[-1]
+                vp = g2o.VertexPointXYZ()
+                vp.set_id(i + 1)
+                vp.set_marginalized(True)
+                vp.set_estimate(point_3d)
+                optimizer.add_vertex(vp)
 
-            matched_kpts_t_1, matched_kpts_t = self._detect_and_match_2d_kpts(img_t_1, img_t)
+                edge = g2o.EdgeProjectXYZ2UV()
+                edge.set_vertex(0, vp)
+                edge.set_vertex(1, optimizer.vertex(0))
+                edge.set_measurement(point_2d)
+                edge.set_information(np.identity(2))
+                edge.set_robust_kernel(g2o.RobustKernelHuber())
+                edge.set_parameter_id(0, 0)
+                optimizer.add_edge(edge)
 
-        #     disparity_t_1 = self.disparity_queue[-2]
-        #     disparity_t = self.disparity_queue[-1]
+            # fig = plt.figure()
+            # ax = fig.add_subplot(projection='3d')
+            # ax.scatter([p[0] for p in points], [p[1] for p in points], [p[2] for p in points], marker=".", s=1)
+            # plt.show()
+            print("num vertices:", len(optimizer.vertices()))
+            print("num edges:", len(optimizer.edges()))
+            optimizer.initialize_optimization()
+            # optimizer.set_verbose(True)
+            optimizer.optimize(10)
 
+            # Update State
+            T = vertex_pose.estimate().to_homogeneous_matrix()
+            self.curr_position = T @ self.curr_position
+            self.curr_orientation = T[:3, :3] @ self.curr_orientation
+            self.positions.append(self.curr_position[:3])
+            self.orientations.append(self.curr_orientation)
+
+        else:
+            # 3D-3D method
+            raise NotImplementedError("3D-3D method not implemented")
+
+        if self.visualize:
+            self.vis.update(self.positions, self.orientations)
+            plt.pause(0.001)
+        return T
         #     # ---------- Non-Linear Least Squares Solving -----------
         #     F1, F2, W1, W2 = self._project_2d_kpts_to_3d(
         #         disparity_t_1, disparity_t, matched_kpts_t_1, matched_kpts_t
@@ -338,42 +408,43 @@ class VisualOdometry:
 
     def _compute_depth_from_disparity(self, disparity):
         cv_depth_map = self.fx * self.baseline / disparity
-
-        if self.visualize:
-            # Clip max distance of 2.0 for visualization
-            _, depth_viz = cv2.threshold(cv_depth_map, 2.0, 2.0, cv2.THRESH_TRUNC)
-            depth_viz = cv2.normalize(depth_viz, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-
-            # Apply TURBO colormap to turn the depth map into color, blue=close, red=far
-            depth_viz = cv2.applyColorMap(depth_viz, cv2.COLORMAP_TURBO)
-
-            # Calculate middle coordinates
-            mid_x = cv_depth_map.shape[1] // 2
-            mid_y = cv_depth_map.shape[0] // 2
-
-            # Select two points around the middle
-            depth_points = [(mid_x - 100, mid_y), (mid_x + 100, mid_y)]
-
-            # Get the depth values at the selected points
-            depth_values = [cv_depth_map[y, x] for x, y in depth_points]
-
-            # Annotate the depth values on the image
-            for (x, y), depth in zip(depth_points, depth_values):
-                depth_str = str(round(depth, 2))  # Round to 2 decimal places
-                cv2.putText(
-                    depth_viz,
-                    depth_str,
-                    (x, y),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 0),
-                    2,
-                    cv2.LINE_AA,
-                )
-
-            cv2.imshow("Depth", depth_viz)
-
         return cv_depth_map
+
+    def _visualize_depth(self, cv_depth_map):
+        # Replace NaN values with 5.0m
+        depth_viz = np.nan_to_num(cv_depth_map, nan=5.0)
+        # Clip to (0.0m, 5.0m) for visualization
+        depth_viz = np.clip(depth_viz, 0.0, 5.0)
+        depth_viz = cv2.normalize(depth_viz, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+
+        # Apply TURBO colormap to turn the depth map into color, blue=close, red=far
+        depth_viz = cv2.applyColorMap(depth_viz, cv2.COLORMAP_TURBO)
+
+        # Calculate middle coordinates
+        mid_x = cv_depth_map.shape[1] // 2
+        mid_y = cv_depth_map.shape[0] // 2
+
+        # Select two points around the middle
+        depth_points = [(mid_x - 100, mid_y), (mid_x + 100, mid_y)]
+
+        # Get the depth values at the selected points
+        depth_values = [cv_depth_map[y, x] for x, y in depth_points]
+
+        # Annotate the depth values on the image
+        for (x, y), depth in zip(depth_points, depth_values):
+            depth_str = str(round(depth, 2))  # Round to 2 decimal places
+            cv2.putText(
+                depth_viz,
+                depth_str,
+                (x, y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (0, 0, 0),
+                2,
+                cv2.LINE_AA,
+            )
+
+        cv2.imshow("Depth", depth_viz)
 
     def _match_2d_kpts(self, kpts_t_1, kpts_t, desc_t_1, desc_t):
         matched_kpts_t_1 = []
