@@ -24,6 +24,9 @@ There are several methods to calculate camera motion:
 - 3D-2D (depth/stereo camera): Uses 3D points (at t-1) and 2D points (at t) to estimate camera motion. This is solved through PnP.
     - PnP itself can be solved in many ways, such as DLT, P3P, etc.
 - 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
+
+We also need to estimate camera motion over a longer time window due to drift and high amount of noise.
+The solution is to use bundle adjustment.
 """
 
 
@@ -37,10 +40,10 @@ class VisualOdometry:
 
     def __init__(self, cx, cy, fx, baseline=0) -> None:
         # --------- General Parameters ---------
-        self.visualize = True
+        self.visualize = False
         self.vis = Visualizer3D()
 
-        # --------- Image Queues ---------
+        # --------- Queues ---------
         self.img_left_queue = []
         self.depth_queue = []
 
@@ -49,14 +52,15 @@ class VisualOdometry:
             minDisparity=0, numDisparities=128, blockSize=5
         )
 
-        # --------- States for Non-linear Optimization ---------
-        self.PAR0 = np.array([0, 0, 0, 1, 0, 0, 0])
-
-        # --------- Store History for visualization ---------
-        self.curr_position = np.array([0, 0, 0, 1])  # homogeneous coordinates
-        self.curr_orientation = np.eye(3)
-        self.positions = []
-        self.orientations = []
+        # --------- State History for Bundle Adjustment ---------
+        self.BA_WINDOW = 100 # Optimize over the last 100 frames
+        # TODO: Only hold frames that have useful information??
+        self.landmarks_2d_prev = [None]
+        self.landmarks_2d = [None]  # List of landmarks at each time frame, in camera frame
+        self.landmarks_3d = [None]  # List of landmarks at each time frame, in world frame
+        # Relative pose transforms at each time frame, pose is a 4x4 SE3 matrix
+        self.poses = [np.eye(4)]  # length T
+        self.relative_poses = []  # length T-1
 
         # --------- Camera Parameters and Matrices ---------
         self.cx = cx
@@ -180,6 +184,7 @@ class VisualOdometry:
         computation.
 
         """
+        print(f"Processing Frame {len(self.img_left_queue)}")
         # ---------- Convert Image to Grayscale -----------
         img_left_gray = self._convert_grayscale(img_left)
         self.img_left_queue.append(img_left_gray)
@@ -231,8 +236,7 @@ class VisualOdometry:
             depth_t_1 = self.depth_queue[-2]
 
             optimizer = g2o.SparseOptimizer()
-            solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())
-            # TODO: Try PCG solver?
+            solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
             solver = g2o.OptimizationAlgorithmLevenberg(solver)
             optimizer.set_algorithm(solver)
 
@@ -247,26 +251,15 @@ class VisualOdometry:
             vertex_pose.set_estimate(pose)
             optimizer.add_vertex(vertex_pose)
 
-            # TODO: vectorize
-            points = []
-            for i, point_2d in enumerate(matched_kpts_t):
-                old_point_2d = matched_kpts_t_1[i]
-                z = depth_t_1[int(old_point_2d[1]), int(old_point_2d[0])]
-                if np.isnan(z):
-                    continue
+            points_3d = self._project_2d_kpts_to_3d(depth_t_1, matched_kpts_t_1)
 
-                # Convert 2D point with depth to 3D in camera frame. Camera initial pose is just identity
-                point_3d = self.K_inv @ (
-                    z
-                    * np.array(
-                        [
-                            old_point_2d[0],
-                            old_point_2d[1],
-                            1,
-                        ]
-                    )
-                )
-                points.append(point_3d)
+            # Some points may have NaN values due to NaN depth values, so we need to drop them
+            points_3d, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
+                points_3d, matched_kpts_t, matched_kpts_t_1
+            )
+
+            for i, point_2d in enumerate(matched_kpts_t):
+                point_3d = points_3d[i]
 
                 vp = g2o.VertexPointXYZ()
                 vp.set_id(i + 1)
@@ -283,95 +276,208 @@ class VisualOdometry:
                 edge.set_parameter_id(0, 0)
                 optimizer.add_edge(edge)
 
-            # fig = plt.figure()
-            # ax = fig.add_subplot(projection='3d')
-            # ax.scatter([p[0] for p in points], [p[1] for p in points], [p[2] for p in points], marker=".", s=1)
-            # plt.show()
-            print("num vertices:", len(optimizer.vertices()))
-            print("num edges:", len(optimizer.edges()))
             optimizer.initialize_optimization()
-            # optimizer.set_verbose(True)
             optimizer.optimize(10)
 
             # Update State
             T = vertex_pose.estimate().to_homogeneous_matrix()
-            self.curr_position = T @ self.curr_position
-            self.curr_orientation = T[:3, :3] @ self.curr_orientation
-            self.positions.append(self.curr_position[:3])
-            self.orientations.append(self.curr_orientation)
+            self.relative_poses.append(T)
+            self.poses.append(self.relative_poses[-1] @ self.poses[-1])
 
         else:
             # 3D-3D method
             raise NotImplementedError("3D-3D method not implemented")
 
+        # --------- Local Mapping ---------
+        depth_t = self.depth_queue[-1]
+        points_3d = self._project_2d_kpts_to_3d(depth_t, matched_kpts_t)
+        points_3d, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
+            points_3d, matched_kpts_t, matched_kpts_t_1
+        )
+
+        self.landmarks_2d_prev.append(matched_kpts_t_1)
+        self.landmarks_2d.append(matched_kpts_t)
+
+        # Convert 3D points from camera to world frame
+        p_k = np.hstack([points_3d, np.ones((points_3d.shape[0], 1))])
+        w_T_k = np.linalg.inv(self.poses[-1])
+        p_w = w_T_k @ p_k.T
+
+        # Convert back from homogeneous to normal coordinates
+        world_points_3d_t = p_w[:3].T  # Discard the homogeneous coordinate
+        self.landmarks_3d.append(world_points_3d_t)
+
+        if len(self.poses) % 30 == 0:
+            positions_before = [T[:3, 3] for T in self.poses]
+            self._local_mapping()
+            positions_after = [T[:3, 3] for T in self.poses]
+            fig = plt.figure()
+            ax = fig.add_subplot(projection='3d')
+            ax.plot(*zip(*positions_before), c='r', label='Before')
+            ax.plot(*zip(*positions_after), c='b', label='After')
+            plt.legend()
+            plt.show()
+
+        # -------- Visualization --------
         if self.visualize:
-            self.vis.update(self.positions, self.orientations)
+            positions = [T[:3, 3] for T in self.poses]
+            orientations = [T[:3, :3] for T in self.poses]
+            self.vis.update(positions, orientations)
             plt.pause(0.001)
         return T
-        #     # ---------- Non-Linear Least Squares Solving -----------
-        #     F1, F2, W1, W2 = self._project_2d_kpts_to_3d(
-        #         disparity_t_1, disparity_t, matched_kpts_t_1, matched_kpts_t
-        #     )
 
-        #     # ---------- Essential Matrix ----------
-        #     ransac_method = cv2.RANSAC
-        #     kRansacThresholdNormalized = (
-        #         0.0003  # metric threshold used for normalized image coordinates
-        #     )
-        #     kRansacProb = 0.999
+    def _drop_invalid_points(self, points_3d, points_2d, points_2d_prev=None):
+        """
+        Drop points that have NaN values in either 2D or 3D coordinates. Assumes that the points are aligned,
+        i.e. points_3d[i] corresponds to points_2d[i].
 
-        #     # the essential matrix algorithm is more robust since it uses the five-point algorithm solver by D. Nister (see the notes and paper above )
-        #     try:
-        #         E, mask = cv2.findEssentialMat(F1, F2, self.K, cv2.RANSAC, 0.5, 3.0, None)
-        #         _, R, t, mask = cv2.recoverPose(E, F1, F2, focal=1, pp=(0.0, 0.0))
+        Parameters
+        ----------
+        points_3d (ndarray): 3D points
+        points_2d (ndarray): 2D points
+        (optional) points_2d_prev (ndarray): 2D points from the previous frame
 
-        #         scale_factor = 0.1  # replace with actual scale factor
-        #         t_scaled = t * scale_factor
+        Returns
+        -------
+        valid_points_2d (ndarray): 2D points without NaN values
+        valid_points_3d (ndarray): 3D points without NaN values
+        """
+        assert len(points_2d) == len(points_3d)
 
-        #         T = np.eye(4)
-        #         T[:3, :3] = R
-        #         T[:3, 3] = t_scaled.flatten()
+        invalid_points = np.logical_or(
+            np.isnan(points_3d).any(axis=1), np.isnan(points_2d).any(axis=1)
+        )
 
-        #         self.curr_pos = np.matmul(T, self.curr_pos)
-        #         self.x_t.append(self.curr_pos[0])
-        #         self.y_t.append(self.curr_pos[1])
-        #         self.z_t.append(self.curr_pos[2])
+        valid_points_2d = points_2d[~invalid_points]
+        valid_points_3d = points_3d[~invalid_points]
+        if points_2d_prev is not None:
+            valid_points_2d_prev = points_2d_prev[~invalid_points]
+            return valid_points_3d, valid_points_2d, valid_points_2d_prev
 
-        #         return self.curr_pos
+        return valid_points_3d, valid_points_2d
 
-        #         # if POSITION_PLOT:
-        #         #     points.set_data(x_t, y_t)
-        #         #     points.set_3d_properties(z_t)  # update the z data
-        #         #     points2.set_data(x_t, y_t)
-        #         #     # redraw just the points
-        #         #     fig.canvas.draw()
+    def _compute_absolute_poses(self, relative_poses, include_initial=True):
+        curr_pose = np.eye(4)
+        absolute_poses = []
 
-        #         # Cannot move faster than 0.5m
-        #         lower_bounds = [-0.5, -0.5, -0.5, -1.0, -1.0, -1.0, -1.0]
-        #         upper_bounds = [0.5, 0.5, 0.5, 1.0, 1.0, 1.0, 1.0]
+        if include_initial:
+            absolute_poses.append(curr_pose)
 
-        #         # res = least_squares(minimize, PAR0, args=(F1, F2, W1, W2, P),
-        #         #                      bounds=(lower_bounds, upper_bounds))
-        #         # print(F1.shape)
-        #         # res = least_squares(minimize, PAR0, args=(F1, F2, W1, W2, P),
-        #         #                     method="lm")
-        #         # print("res.x", res.x)
-        #         # curr_x += res.x[0]
-        #         # curr_y += res.x[1]
-        #         # curr_z += res.x[2]
-        #         # x_t.append(curr_x)
-        #         # y_t.append(curr_y)
-        #         # z_t.append(curr_z)
+        for T in relative_poses:
+            curr_pose = T @ curr_pose
+            absolute_poses.append(curr_pose)
+        return absolute_poses
 
-        #         # points.set_data(x_t, y_t)
-        #         # points.set_3d_properties(z_t)  # update the z data
-        #         # # redraw just the points
-        #         # fig.canvas.draw()
+    def _compute_relative_poses(self, absolute_poses):
+        relative_poses = []
+        for i in range(1, len(absolute_poses)):
+            T_base = absolute_poses[i - 1]
+            T_target = absolute_poses[i]
+            T_base_inv = np.linalg.inv(T_base)
+            T_relative = T_base_inv @ T_target
+            relative_poses.append(T_relative)
 
-        #     except Exception as e:
-        #         print("Optimization failed", e)
+        return relative_poses
+
+    def _local_mapping(self):
+        """
+        Optimize poses and points in the local window. Visual odometry suffers from lots of drift, so we need to do local bundle adjusment.
+
+        each landmark is tracked form t and t-1.
+        """
+
+        # ----------- Bundle Adjustment -----------
+        optimizer = g2o.SparseOptimizer()
+        solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
+        solver = g2o.OptimizationAlgorithmLevenberg(solver)
+        optimizer.set_algorithm(solver)
+
+        # Add Camera
+        cam = g2o.CameraParameters(self.fx, (self.cx, self.cy), 0)
+        cam.set_id(0)
+        optimizer.add_parameter(cam)
+
+        # Add camera poses
+        point_id = len(self.poses)
+
+        for i, curr_pose in enumerate(self.poses):
+            v_se3 = g2o.VertexSE3Expmap()
+            v_se3.set_id(i)
+            v_se3.set_estimate(g2o.SE3Quat(curr_pose[:3, :3], curr_pose[:3, 3]))
+            if i < 2:
+                v_se3.set_fixed(True)
+            optimizer.add_vertex(v_se3)
+
+            if i == 0:  # At first frame, we don't have the previous landmark
+                continue
+
+            points_2d_prev = self.landmarks_2d_prev[i]
+            points_2d = self.landmarks_2d[i]
+            points_3d = self.landmarks_3d[i]
+
+            for point_2d_prev, point_2d, point_3d in zip(points_2d_prev, points_2d, points_3d):
+                point_id += 1
+                # Landmark 3D point
+                vp = g2o.VertexPointXYZ()
+                vp.set_id(point_id)
+                vp.set_marginalized(True)
+                vp.set_estimate(point_3d)
+                optimizer.add_vertex(vp)
+
+                # Edge constraint for current frame
+                edge = g2o.EdgeProjectXYZ2UV()
+                edge.set_vertex(0, vp)
+                edge.set_vertex(1, optimizer.vertex(i))
+                edge.set_measurement(point_2d)
+                edge.set_information(np.identity(2))
+                edge.set_robust_kernel(g2o.RobustKernelHuber())
+                edge.set_parameter_id(0, 0)
+                optimizer.add_edge(edge)
+
+                if i > 0:  # Edge constraint for previous frame
+                    edge = g2o.EdgeProjectXYZ2UV()
+                    edge.set_vertex(0, vp)
+                    edge.set_vertex(1, optimizer.vertex(i - 1))
+                    edge.set_measurement(point_2d_prev)
+                    edge.set_information(np.identity(2))
+                    edge.set_robust_kernel(g2o.RobustKernelHuber())
+                    edge.set_parameter_id(0, 0)
+                    optimizer.add_edge(edge)
+
+        print("num vertices:", len(optimizer.vertices()))
+        print("num edges:", len(optimizer.edges()))
+        optimizer.initialize_optimization()
+        optimizer.optimize(30)
+
+        # Update State
+        self.poses = [
+            optimizer.vertex(i).estimate().to_homogeneous_matrix() for i in range(len(self.poses))
+        ]
+        self.relative_poses = self._compute_relative_poses(self.poses)
+
+        # TODO: come up with better way to do this
+        point_id = len(self.poses)
+        for i in range(1, len(self.poses)):
+            new_points_3d = []
+            for j in range(len(self.landmarks_3d[i])):
+                point_id += 1
+                new_points_3d.append(optimizer.vertex(point_id).estimate())
+
+            self.landmarks_3d[i] = np.array(new_points_3d)
 
     def _compute_orb(self, img_t):
+        """
+        Compute ORB keypoints and descriptors for a given image.
+
+        Parameters
+        ----------
+        img_t (ndarray): Image at time t
+
+        Returns
+        -------
+        kpts_t (tuple): Keypoints at time t
+        desc_t (ndarray): Descriptors at time t
+        """
         if CUDA:
             kpts_t, desc_t = self.orb.detectAndComputeAsync(img_t, None)
 
@@ -397,6 +503,19 @@ class VisualOdometry:
         return img_gray
 
     def _detect_and_match_2d_kpts(self, img_t_1, img_t):
+        """
+        Detect and match 2D keypoints across two consecutive frames.
+
+        Parameters
+        ----------
+        img_t_1 (ndarray): Image at time t-1
+        img_t (ndarray): Image at time t
+
+        Returns
+        -------
+        matched_kpts_t_1 (ndarray): Matched keypoints at time t-1
+        matched_kpts_t (ndarray): Matched keypoints at time t
+        """
         # ---------- Compute ORB Keypoints and Descriptors ----------
         kpts_t_1, desc_t_1 = self._compute_orb(img_t_1)
         kpts_t, desc_t = self._compute_orb(img_t)
@@ -447,31 +566,33 @@ class VisualOdometry:
         cv2.imshow("Depth", depth_viz)
 
     def _match_2d_kpts(self, kpts_t_1, kpts_t, desc_t_1, desc_t):
+        """
+        Match 2D keypoints across two frames using descriptors.
+
+        Parameters
+        ----------
+        kpts_t_1 (list): Keypoints at time t-1
+        kpts_t (list): Keypoints at time t
+        desc_t_1 (ndarray): Descriptors at time t-1
+        desc_t (ndarray): Descriptors at time t
+
+        Returns
+        -------
+        matched_kpts_t_1 (ndarray): Matched keypoints at time t-1
+        matched_kpts_t (ndarray): Matched keypoints at time t
+        """
         matched_kpts_t_1 = []
         matched_kpts_t = []
 
-        USE_BF = False
-        # # CPU-Only bfmatcher
-        # # TODO: there's this GPU based matcher:
-        # # https://forums.developer.nvidia.com/t/feature-extraction-and-matching-with-cuda-opencv-python/230784
-        # # matcherGPU = cv2.cuda.DescriptorMatcher_createBFMatcher(cv2.NORM_HAMMING)
-        if USE_BF:
-            matches = self.bf_matcher.match(desc_t_1, desc_t)
-
-            for match in matches:
-                matched_kpts_t_1.append(list(kpts_t_1[match.queryIdx].pt))
-                matched_kpts_t.append(list(kpts_t[match.trainIdx].pt))
-            good_matches = matches
-        else:
-            # FLANN based matcher
-            matches = self.flann.knnMatch(desc_t_1, desc_t, k=2)
-            good_matches = []
-            try:
-                for m, n in matches:
-                    if m.distance < 0.8 * n.distance:
-                        good_matches.append(m)
-            except ValueError:
-                pass
+        # FLANN based matcher
+        matches = self.flann.knnMatch(desc_t_1, desc_t, k=2)
+        good_matches = []
+        try:
+            for m, n in matches:
+                if m.distance < 0.8 * n.distance:
+                    good_matches.append(m)
+        except ValueError:
+            pass
 
         for match in good_matches:
             matched_kpts_t_1.append(list(kpts_t_1[match.queryIdx].pt))
@@ -489,43 +610,42 @@ class VisualOdometry:
             cv2.imshow("Tracked ORB", output_image)
         return np.array(matched_kpts_t_1), np.array(matched_kpts_t)
 
-    def _project_2d_kpts_to_3d(self, disparity_t_1, disparity_t, matched_kpts_t_1, matched_kpts_t):
-        keypoints_2d_t_1 = []
-        keypoints_2d_t = []
-        keypoints_3d_t_1 = []
-        keypoints_3d_t = []
+    def _project_2d_kpts_to_3d(self, depth, matched_kpts):
+        """
+        Vectorized method to project 2D keypoints to 3D points using depth information.
+        3D points may contain NaN values if the depth is NaN.
 
-        max_disparity = np.max(disparity_t)
+        To convert from 2D to 3D, we use the following equation:
 
-        # TODO: Vectorize this
-        for i in range(len(matched_kpts_t_1)):
-            # From https://avisingh599.github.io/vision/visual-odometry-full/
-            kpts_t_1 = matched_kpts_t_1[i]
-            kpts_t = matched_kpts_t[i]
-            x_1 = int(kpts_t_1[0])
-            y_1 = int(kpts_t_1[1])
-            d_1 = disparity_t_1[y_1, x_1]
-            x = int(kpts_t[0])
-            y = int(kpts_t[1])
-            d = disparity_t[y, x]
-            if d_1 == max_disparity or d_1 == 0 or d == max_disparity or d == 0:
-                continue
+        sp = KP
 
-            point = np.array([x_1, y_1, d_1, 1])
-            point_3d = np.matmul(self.Q, point)
-            point_3d /= point_3d[3]  # Normalize
-            keypoints_2d_t_1.append(kpts_t_1)
-            keypoints_3d_t_1.append(point_3d[:3])  # (X,Y,Z)
+        where
+        - p = [u v 1] is the 2D point as measured by the camera in homogeneous coordinates
+        - K is the intrinsic matrix
+        - P = [x y z] is the 3D point in camera frame
+        - s is some scalar (equal to z in the 3D point P = [x y z] in camera frame)
 
-            point = np.array([x, y, d, 1])
-            point_3d = np.matmul(self.Q, point)
-            point_3d /= point_3d[3]  # Normalize
-            keypoints_2d_t.append(kpts_t)
-            keypoints_3d_t.append(point_3d[:3])  # (X,Y,Z)
+        Therefore, we can solve for P by multiplying the inverse of K with the 2D keypoint:
+        P = K^{-1} s p
 
-        return (
-            np.array(keypoints_2d_t_1),
-            np.array(keypoints_2d_t),
-            np.array(keypoints_3d_t_1),
-            np.array(keypoints_3d_t),
-        )
+        Parameters
+        ----------
+        depth (ndarray): Depth image
+        matched_kpts (ndarray): 2D keypoints, assumed to be an array of shape (N, 2)
+
+        Returns
+        -------
+        points_3d (ndarray): 3D points in camera frame, shape (N, 3)
+        """
+        # Extracting the depth values of 2D keypoints
+        depths = depth[matched_kpts[:, 1].astype(int), matched_kpts[:, 0].astype(int)]
+
+        # Recover depth from homogeneous system by multiplying keypoints by their respective depths (solve s p)
+        scaled_2d_points = matched_kpts * depths[:, np.newaxis]  # Shape (N, 2)
+        scaled_2d_points = np.hstack((scaled_2d_points, depths.reshape(-1, 1)))  # Shape (N, 3)
+
+        # K^{-1} z p
+        points_3d = self.K_inv @ scaled_2d_points.T  # (3,3) @ (3,N) = (3, N)
+        points_3d = points_3d.T  # (N, 3)
+
+        return points_3d  # Transpose to get shape (N, 3)
