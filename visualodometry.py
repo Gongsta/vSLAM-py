@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 from enum import Enum
 import g2o
+import matplotlib.pyplot as plt
 
 CUDA = False
 if CUDA:
@@ -9,28 +10,23 @@ if CUDA:
 
     # from cv2 import cuda_StereoSGM as StereoSGBM  # Too slow
     from opencv_vpi.disparity import StereoSGBM
-
 else:
     from cv2 import ORB
     from cv2 import StereoSGBM
 
 
-import matplotlib.pyplot as plt
-from visualization import PangoVisualizer
-
-"""
-There are several methods to calculate camera motion:
-- 2D-2D (monocular camera): Uses two sets of 2D points (at t-1 and t) to estimate camera motion. This is solved through epipolar geometry.
-- 3D-2D (depth/stereo camera): Uses 3D points (at t-1) and 2D points (at t) to estimate camera motion. This is solved through PnP.
-    - PnP itself can be solved in many ways, such as DLT, P3P, etc.
-- 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
-
-We also need to estimate camera motion over a longer time window due to drift and high amount of noise.
-The solution is to use bundle adjustment.
-"""
-
-
 class VOMethod(Enum):
+    """
+    There are several methods to calculate camera motion:
+    - 2D-2D (monocular camera): Uses two sets of 2D points (at t-1 and t) to estimate camera motion. This is solved through epipolar geometry.
+    - 3D-2D (depth/stereo camera): Uses 3D points (at t-1) and 2D points (at t) to estimate camera motion. This is solved through PnP.
+        - PnP itself can be solved in many ways, such as DLT, P3P, etc.
+    - 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
+
+    We also need to estimate camera motion over a longer time window due to drift and high amount of noise.
+    The solution is to use bundle adjustment.
+    """
+
     VO_2D_2D = 1
     VO_3D_2D = 2
     VO_3D_3D = 3
@@ -39,28 +35,34 @@ class VOMethod(Enum):
 class VisualOdometry:
 
     def __init__(self, cx, cy, fx, baseline=0) -> None:
-        # --------- General Parameters ---------
+        # --------- Visualization ---------
         self.visualize = True
-        self.vis = PangoVisualizer()
 
         # --------- Queues ---------
         self.img_left_queue = []
         self.depth_queue = []
 
-        # --------- Detectors ---------
+        # --------- Detectors (for Frontend) ---------
         self.disparity_estimator = StereoSGBM.create(
             minDisparity=0, numDisparities=128, blockSize=5
         )
+        self.orb = ORB.create(3000)
+        FLANN_INDEX_LSH = 6
+        index_params = dict(
+            algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1
+        )
+        search_params = dict(checks=50)
+        self.flann = cv2.FlannBasedMatcher(indexParams=index_params, searchParams=search_params)
 
-        # --------- State History for Bundle Adjustment ---------
-        self.BA_WINDOW = 100 # Optimize over the last 100 frames
+        # --------- States (used in Bundle Adjustment in Backend) ---------
+        self.BA_WINDOW = 100  # Optimize over the last 100 frames
         # TODO: Only hold frames that have useful information??
         self.landmarks_2d_prev = [None]
         self.landmarks_2d = [None]  # List of landmarks at each time frame, in camera frame
         self.landmarks_3d = [None]  # List of landmarks at each time frame, in world frame
         # Relative pose transforms at each time frame, pose is a 4x4 SE3 matrix
         self.poses = [np.eye(4)]  # length T
-        self.relative_poses = []  # length T-1
+        self.relative_poses = []  # length T-1, since relative
 
         # --------- Camera Parameters and Matrices ---------
         self.cx = cx
@@ -74,18 +76,6 @@ class VisualOdometry:
         self.Q = np.array(
             [[1, 0, 0, -cx], [0, 1, 0, -cy], [0, 0, 0, -fx], [0, 0, -1.0 / baseline, 0]]
         )
-
-        self.orb = ORB.create(3000)
-
-        ### Feature Matcher
-        self.bf_matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
-
-        FLANN_INDEX_LSH = 6
-        index_params = dict(
-            algorithm=FLANN_INDEX_LSH, table_number=6, key_size=12, multi_probe_level=1
-        )
-        search_params = dict(checks=50)
-        self.flann = cv2.FlannBasedMatcher(indexParams=index_params, searchParams=search_params)
 
     @staticmethod
     def _form_transf(R, t):
@@ -179,12 +169,11 @@ class VisualOdometry:
         3. 3D-3D (solve with ICP) (not currently implemented)
         - If no depth image is provided, the depth is computed by disparity
 
-
         if CUDA flag is true, images as by default a cv2.cuda_GpuMat. Memory is abstracted away, so you focus on
         computation.
-
         """
-        print(f"Processing Frame {len(self.img_left_queue)}")
+        print(f"Processing Frame #{len(self.img_left_queue)}")
+
         # ---------- Convert Image to Grayscale -----------
         img_left_gray = self._convert_grayscale(img_left)
         self.img_left_queue.append(img_left_gray)
@@ -196,21 +185,22 @@ class VisualOdometry:
                 disparity = self.disparity_estimator.compute(img_left_gray, img_right_gray)
                 depth = self._compute_depth_from_disparity(disparity)
 
-            depth[depth < 0.0] = np.nan  # cleanup negative depth values
+            depth[depth < 0.0] = np.nan
             self.depth_queue.append(depth)
 
+        # ---------- Compute and Match Keypoints (kpts) across frames -----------
         if len(self.img_left_queue) < 2:
             return
 
-        # ---------- Compute and Match Keypoints (kpts) across frames -----------
-        img_left_t_1 = self.img_left_queue[-2]  # image at time t-1
-        img_left_t = self.img_left_queue[-1]  # image at time t
+        img_left_t_1 = self.img_left_queue[-2]
+        img_left_t = self.img_left_queue[-1]
 
         matched_kpts_t_1, matched_kpts_t = self._detect_and_match_2d_kpts(img_left_t_1, img_left_t)
 
-        # ---------- Solve for camera motion -----------
+        # ---------- Solve for camera motion (3 Different Methods) -----------
         if method == VOMethod.VO_2D_2D:
             # 2D-2D - Solve through Epipolar Geometry
+            # IDK what I did here, took from https://github.com/niconielsen32/ComputerVision/blob/master/VisualOdometry/visual_odometry.py
             F1, F2 = matched_kpts_t_1, matched_kpts_t
             try:
                 # E, mask = cv2.findEssentialMat(F1, F2, self.K, cv2.RANSAC, 0.5, 3.0, None)
@@ -219,10 +209,6 @@ class VisualOdometry:
                 # Decompose the Essential matrix into R and t
                 R, t = self.decomp_essential_mat(E, F1, F2)
 
-                # _, R, t, mask = cv2.recoverPose(E, F1, F2, focal=1, pp=(0.0, 0.0))
-
-                # scale_factor = 0.1  # replace with actual scale factor
-                # t_scaled = t * scale_factor
                 T = self._form_transf(R, np.squeeze(t))
 
             except Exception as e:
@@ -231,56 +217,15 @@ class VisualOdometry:
 
         elif method == VOMethod.VO_3D_2D:
             # 3D-2D - Solve by minimizing the reprojection error
-
-            # use depth_t_1 and matched_kpts_t to solve for camera motion
             depth_t_1 = self.depth_queue[-2]
-
-            optimizer = g2o.SparseOptimizer()
-            solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
-            solver = g2o.OptimizationAlgorithmLevenberg(solver)
-            optimizer.set_algorithm(solver)
-
-            cam = g2o.CameraParameters(self.fx, (self.cx, self.cy), 0)
-            cam.set_id(0)
-            optimizer.add_parameter(cam)
-
-            # Add camera pose
-            pose = g2o.SE3Quat()
-            vertex_pose = g2o.VertexSE3Expmap()
-            vertex_pose.set_id(0)
-            vertex_pose.set_estimate(pose)
-            optimizer.add_vertex(vertex_pose)
-
-            points_3d = self._project_2d_kpts_to_3d(depth_t_1, matched_kpts_t_1)
+            points_3d_t_1 = self._project_2d_kpts_to_3d(depth_t_1, matched_kpts_t_1)
 
             # Some points may have NaN values due to NaN depth values, so we need to drop them
-            points_3d, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
-                points_3d, matched_kpts_t, matched_kpts_t_1
+            points_3d_t_1, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
+                points_3d_t_1, matched_kpts_t, matched_kpts_t_1
             )
 
-            for i, point_2d in enumerate(matched_kpts_t):
-                point_3d = points_3d[i]
-
-                vp = g2o.VertexPointXYZ()
-                vp.set_id(i + 1)
-                vp.set_marginalized(True)
-                vp.set_estimate(point_3d)
-                optimizer.add_vertex(vp)
-
-                edge = g2o.EdgeProjectXYZ2UV()
-                edge.set_vertex(0, vp)
-                edge.set_vertex(1, optimizer.vertex(0))
-                edge.set_measurement(point_2d)
-                edge.set_information(np.identity(2))
-                edge.set_robust_kernel(g2o.RobustKernelHuber())
-                edge.set_parameter_id(0, 0)
-                optimizer.add_edge(edge)
-
-            optimizer.initialize_optimization()
-            optimizer.optimize(10)
-
-            # Update State
-            T = vertex_pose.estimate().to_homogeneous_matrix()
+            T = self._minimize_reprojection_error(matched_kpts_t, points_3d_t_1)
             self.relative_poses.append(T)
             self.poses.append(self.relative_poses[-1] @ self.poses[-1])
 
@@ -288,41 +233,68 @@ class VisualOdometry:
             # 3D-3D method
             raise NotImplementedError("3D-3D method not implemented")
 
-        # --------- Local Mapping ---------
         depth_t = self.depth_queue[-1]
-        points_3d = self._project_2d_kpts_to_3d(depth_t, matched_kpts_t)
-        points_3d, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
-            points_3d, matched_kpts_t, matched_kpts_t_1
+        points_3d_t = self._project_2d_kpts_to_3d(depth_t, matched_kpts_t)
+        points_3d_t, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
+            points_3d_t, matched_kpts_t, matched_kpts_t_1
         )
 
         self.landmarks_2d_prev.append(matched_kpts_t_1)
         self.landmarks_2d.append(matched_kpts_t)
 
         # Convert 3D points from camera to world frame
-        p_k = np.hstack([points_3d, np.ones((points_3d.shape[0], 1))])
+        p_k = np.hstack([points_3d_t, np.ones((points_3d_t.shape[0], 1))])  # Homogenous
         w_T_k = np.linalg.inv(self.poses[-1])
         p_w = w_T_k @ p_k.T
-
-        # Convert back from homogeneous to normal coordinates
         world_points_3d_t = p_w[:3].T  # Discard the homogeneous coordinate
         self.landmarks_3d.append(world_points_3d_t)
 
-        # if len(self.poses) % 30 == 0:
-        #     positions_before = [T[:3, 3] for T in self.poses]
-        #     self._local_mapping()
-        #     positions_after = [T[:3, 3] for T in self.poses]
-        #     fig = plt.figure()
-        #     ax = fig.add_subplot(projection='3d')
-        #     ax.plot(*zip(*positions_before), c='r', label='Before')
-        #     ax.plot(*zip(*positions_after), c='b', label='After')
-        #     plt.legend()
-        #     plt.show()
 
-        # -------- Visualization --------
-        if self.visualize:
-            positions = [T[:3, 3] for T in self.poses]
-            orientations = [T[:3, :3] for T in self.poses]
-            self.vis.update(positions, orientations, self.landmarks_3d[-1])
+
+        return T
+
+    def _minimize_reprojection_error(self, points_2d, points_3d):
+        """
+        Refer to SLAM textbook for formulation. Solved with g2o.
+        """
+        optimizer = g2o.SparseOptimizer()
+        solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
+        solver = g2o.OptimizationAlgorithmLevenberg(solver)
+        optimizer.set_algorithm(solver)
+
+        cam = g2o.CameraParameters(self.fx, (self.cx, self.cy), 0)
+        cam.set_id(0)
+        optimizer.add_parameter(cam)
+
+        # Add camera pose
+        pose = g2o.SE3Quat()
+        vertex_pose = g2o.VertexSE3Expmap()
+        vertex_pose.set_id(0)
+        vertex_pose.set_estimate(pose)
+        optimizer.add_vertex(vertex_pose)
+
+        for i, point_2d in enumerate(points_2d):
+            point_3d = points_3d[i]
+
+            vp = g2o.VertexPointXYZ()
+            vp.set_id(i + 1)
+            vp.set_marginalized(True)
+            vp.set_estimate(point_3d)
+            optimizer.add_vertex(vp)
+
+            edge = g2o.EdgeProjectXYZ2UV()
+            edge.set_vertex(0, vp)
+            edge.set_vertex(1, optimizer.vertex(0))
+            edge.set_measurement(point_2d)
+            edge.set_information(np.identity(2))
+            edge.set_robust_kernel(g2o.RobustKernelHuber())
+            edge.set_parameter_id(0, 0)
+            optimizer.add_edge(edge)
+
+        optimizer.initialize_optimization()
+        optimizer.optimize(10)
+
+        T = vertex_pose.estimate().to_homogeneous_matrix()
         return T
 
     def _drop_invalid_points(self, points_3d, points_2d, points_2d_prev=None):
@@ -354,115 +326,6 @@ class VisualOdometry:
             return valid_points_3d, valid_points_2d, valid_points_2d_prev
 
         return valid_points_3d, valid_points_2d
-
-    def _compute_absolute_poses(self, relative_poses, include_initial=True):
-        curr_pose = np.eye(4)
-        absolute_poses = []
-
-        if include_initial:
-            absolute_poses.append(curr_pose)
-
-        for T in relative_poses:
-            curr_pose = T @ curr_pose
-            absolute_poses.append(curr_pose)
-        return absolute_poses
-
-    def _compute_relative_poses(self, absolute_poses):
-        relative_poses = []
-        for i in range(1, len(absolute_poses)):
-            T_base = absolute_poses[i - 1]
-            T_target = absolute_poses[i]
-            T_base_inv = np.linalg.inv(T_base)
-            T_relative = T_base_inv @ T_target
-            relative_poses.append(T_relative)
-
-        return relative_poses
-
-    def _local_mapping(self):
-        """
-        Optimize poses and points in the local window. Visual odometry suffers from lots of drift, so we need to do local bundle adjusment.
-
-        each landmark is tracked form t and t-1.
-        """
-
-        # ----------- Bundle Adjustment -----------
-        optimizer = g2o.SparseOptimizer()
-        solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
-        solver = g2o.OptimizationAlgorithmLevenberg(solver)
-        optimizer.set_algorithm(solver)
-
-        # Add Camera
-        cam = g2o.CameraParameters(self.fx, (self.cx, self.cy), 0)
-        cam.set_id(0)
-        optimizer.add_parameter(cam)
-
-        # Add camera poses
-        point_id = len(self.poses)
-
-        for i, curr_pose in enumerate(self.poses):
-            v_se3 = g2o.VertexSE3Expmap()
-            v_se3.set_id(i)
-            v_se3.set_estimate(g2o.SE3Quat(curr_pose[:3, :3], curr_pose[:3, 3]))
-            if i < 2:
-                v_se3.set_fixed(True)
-            optimizer.add_vertex(v_se3)
-
-            if i == 0:  # At first frame, we don't have the previous landmark
-                continue
-
-            points_2d_prev = self.landmarks_2d_prev[i]
-            points_2d = self.landmarks_2d[i]
-            points_3d = self.landmarks_3d[i]
-
-            for point_2d_prev, point_2d, point_3d in zip(points_2d_prev, points_2d, points_3d):
-                point_id += 1
-                # Landmark 3D point
-                vp = g2o.VertexPointXYZ()
-                vp.set_id(point_id)
-                vp.set_marginalized(True)
-                vp.set_estimate(point_3d)
-                optimizer.add_vertex(vp)
-
-                # Edge constraint for current frame
-                edge = g2o.EdgeProjectXYZ2UV()
-                edge.set_vertex(0, vp)
-                edge.set_vertex(1, optimizer.vertex(i))
-                edge.set_measurement(point_2d)
-                edge.set_information(np.identity(2))
-                edge.set_robust_kernel(g2o.RobustKernelHuber())
-                edge.set_parameter_id(0, 0)
-                optimizer.add_edge(edge)
-
-                if i > 0:  # Edge constraint for previous frame
-                    edge = g2o.EdgeProjectXYZ2UV()
-                    edge.set_vertex(0, vp)
-                    edge.set_vertex(1, optimizer.vertex(i - 1))
-                    edge.set_measurement(point_2d_prev)
-                    edge.set_information(np.identity(2))
-                    edge.set_robust_kernel(g2o.RobustKernelHuber())
-                    edge.set_parameter_id(0, 0)
-                    optimizer.add_edge(edge)
-
-        print("num vertices:", len(optimizer.vertices()))
-        print("num edges:", len(optimizer.edges()))
-        optimizer.initialize_optimization()
-        optimizer.optimize(30)
-
-        # ----------- Update State -----------
-        self.poses = [
-            optimizer.vertex(i).estimate().to_homogeneous_matrix() for i in range(len(self.poses))
-        ]
-        self.relative_poses = self._compute_relative_poses(self.poses)
-
-        # Landmarks poses have also shifted, so we need to update the state
-        point_id = len(self.poses)
-        for i in range(1, len(self.poses)):
-            new_points_3d = []
-            for j in range(len(self.landmarks_3d[i])):
-                point_id += 1
-                new_points_3d.append(optimizer.vertex(point_id).estimate())
-
-            self.landmarks_3d[i] = np.array(new_points_3d)
 
     def _compute_orb(self, img_t):
         """
