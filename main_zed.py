@@ -7,7 +7,8 @@ import time
 import cv2
 import os
 
-from visualodometry import VisualOdometry
+from frontend import VisualOdometry
+from backend import BundleAdjustment
 
 USE_SIM = True
 
@@ -16,33 +17,36 @@ if not USE_SIM:
 
 from utils import download_file
 
+
 def main():
     parser = ArgumentParser()
     parser.add_argument("--visualize", default=True, action="store_true", help="Show visualization")
     args = parser.parse_args()
 
-    x_t = []
-    y_t = []
-    z_t = []
-
     # --------- Init Zed Camera ---------
     if USE_SIM:
         if not os.path.isfile("sample_zed/data.npz"):
             os.makedirs("sample_zed", exist_ok=True)
-            download_file("https://github.com/Gongsta/Datasets/raw/main/sample_zed/camera_params.npz", "sample_zed/camera_params.npz")
-            download_file("https://github.com/Gongsta/Datasets/raw/main/sample_zed/data.npz", "sample_zed/data.npz")
+            download_file(
+                "https://github.com/Gongsta/Datasets/raw/main/sample_zed/camera_params.npz",
+                "sample_zed/camera_params.npz",
+            )
+            download_file(
+                "https://github.com/Gongsta/Datasets/raw/main/sample_zed/data.npz",
+                "sample_zed/data.npz",
+            )
 
         data = np.load("sample_zed/data.npz")
         calibration = np.load("sample_zed/camera_params.npz")
 
-        stereo_images = data['stereo']
-        depth_images = data['depth']
+        stereo_images = data["stereo"]
+        depth_images = data["depth"]
 
-        K = calibration['K']
+        K = calibration["K"]
         cx = K[0, 2]
         cy = K[1, 2]
         fx = K[0, 0]
-        baseline = calibration['baseline']
+        baseline = calibration["baseline"]
 
         image_counter = 0
 
@@ -75,16 +79,13 @@ def main():
         sl_depth = sl.Mat()
 
     vo = VisualOdometry(cx, cy, fx, baseline)
-    gt_path = []
-    pred_path = []
-    curr_pose = None
-
+    backend = BundleAdjustment(cx, cy, fx)
 
     while True:
         start = time.time()
         if USE_SIM:
             cv_stereo_img = stereo_images[image_counter]
-            cv_img_left = cv_stereo_img[:, :cv_stereo_img.shape[1] // 2, :]
+            cv_img_left = cv_stereo_img[:, : cv_stereo_img.shape[1] // 2, :]
             cv_depth = depth_images[image_counter]
 
             image_counter += 1
@@ -95,8 +96,10 @@ def main():
             if zed.grab() == sl.ERROR_CODE.SUCCESS:
                 zed.retrieve_image(sl_stereo_img, sl.VIEW.SIDE_BY_SIDE)
                 zed.retrive_measure(sl_depth, sl.MEASURE.DEPTH)
-                cv_stereo_img = sl_stereo_img.get_data()[:, :, :3] # Last channel is padded for byte alignment
-                cv_img_left = cv_stereo_img[:, :image_size.width, :]
+                cv_stereo_img = sl_stereo_img.get_data()[
+                    :, :, :3
+                ]  # Last channel is padded for byte alignment
+                cv_img_left = cv_stereo_img[:, : image_size.width, :]
                 # cv_img_right = cv_stereo_img[:, image_size.width:, :]
                 cv_depth = sl_depth.get_data()
 
@@ -104,28 +107,15 @@ def main():
                 break
 
         T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
-        print(T)
-                # if curr_pose is None:
-                #     curr_pose = np.eye(4)
-                # else:
-                #     curr_pose = np.matmul(curr_pose, np.linalg.inv(T))
-
-                # pred_path.append((curr_pose[0, 3], curr_pose[2, 3], curr_pose[1, 3]))
-
-                # x_t = [pred_path[i][0] for i in range(len(pred_path))]
-                # y_t = [pred_path[i][1] for i in range(len(pred_path))]
-                # z_t = [pred_path[i][2] for i in range(len(pred_path))]
-
+        poses, landmarks_3d = backend.solve(vo.poses, vo.landmarks_2d_prev, vo.landmarks_2d, vo.landmarks_3d)
 
         key = cv2.waitKey(1)
         if key == "q":
-            running = False
             break
         curr = time.time()
         latency = 1.0 / (curr - start)
         print(f"Running at {latency} hz")
         start = curr
-
 
 
 if __name__ == "__main__":

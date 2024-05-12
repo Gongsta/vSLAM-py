@@ -71,8 +71,16 @@ class PangoVisualizer:
             glEnd()
 
     def update(self, positions, orientations, landmarks=None):
+        """
+
+
+        Parameters
+        ----------
+        positions (list of 3x1 ndarray): Positions expressed as a 3x1 vector, in world frame
+        orientations (list of 3x3 ndarray): Orientations expressed as a 3x3 rotation matrix, in world frame
+
+        """
         assert len(positions) == len(orientations)
-        # while not pango.ShouldQuit():
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self.d_cam.Activate(self.s_cam)
         glClearColor(1.0, 1.0, 1.0, 1.0)

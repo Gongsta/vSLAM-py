@@ -33,7 +33,6 @@ class VOMethod(Enum):
 
 
 class VisualOdometry:
-
     def __init__(self, cx, cy, fx, baseline=0) -> None:
         # --------- Visualization ---------
         self.visualize = True
@@ -172,7 +171,8 @@ class VisualOdometry:
         if CUDA flag is true, images as by default a cv2.cuda_GpuMat. Memory is abstracted away, so you focus on
         computation.
         """
-        print(f"Processing Frame #{len(self.img_left_queue)}")
+        if img_right is None and depth is None:
+            method = VOMethod.VO_2D_2D
 
         # ---------- Convert Image to Grayscale -----------
         img_left_gray = self._convert_grayscale(img_left)
@@ -208,8 +208,9 @@ class VisualOdometry:
 
                 # Decompose the Essential matrix into R and t
                 R, t = self.decomp_essential_mat(E, F1, F2)
+                t_scaled = 0.1 * t
 
-                T = self._form_transf(R, np.squeeze(t))
+                T = self._form_transf(R, np.squeeze(t_scaled))
 
             except Exception as e:
                 print("Optimization failed", e)
@@ -233,12 +234,15 @@ class VisualOdometry:
             # 3D-3D method
             raise NotImplementedError("3D-3D method not implemented")
 
+        if method == VOMethod.VO_2D_2D:
+            return T
+
+        # ---------- Store poses and landmarks that will be used by backend -----------
         depth_t = self.depth_queue[-1]
         points_3d_t = self._project_2d_kpts_to_3d(depth_t, matched_kpts_t)
         points_3d_t, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
             points_3d_t, matched_kpts_t, matched_kpts_t_1
         )
-
         self.landmarks_2d_prev.append(matched_kpts_t_1)
         self.landmarks_2d.append(matched_kpts_t)
 
@@ -248,8 +252,6 @@ class VisualOdometry:
         p_w = w_T_k @ p_k.T
         world_points_3d_t = p_w[:3].T  # Discard the homogeneous coordinate
         self.landmarks_3d.append(world_points_3d_t)
-
-
 
         return T
 
@@ -447,7 +449,11 @@ class VisualOdometry:
         matched_kpts_t = []
 
         # FLANN based matcher
-        matches = self.flann.knnMatch(desc_t_1, desc_t, k=2)
+        try:
+            matches = self.flann.knnMatch(desc_t_1, desc_t, k=2)
+        except:
+            matches = []
+
         good_matches = []
         try:
             for m, n in matches:

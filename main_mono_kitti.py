@@ -1,18 +1,15 @@
 import numpy as np
 from argparse import ArgumentParser
 import matplotlib.pyplot as plt
-import zipfile
-from pathlib import Path
-
-np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
-
-from visualodometry import VisualOdometry
 
 import os
 import time
-import urllib.request
 import cv2
 from matplotlib import pyplot as plt
+from frontend import VisualOdometry
+
+np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
+
 
 def main():
     parser = ArgumentParser()
@@ -72,14 +69,14 @@ def main():
     cv2.destroyAllWindows()
 
     gt_path = [(gt_pose[0, 3], gt_pose[2, 3]) for gt_pose in gt_poses]
-    x_t = [pred_path[i][0] for i in range(len(pred_path)) ]
-    y_t = [pred_path[i][1] for i in range(len(pred_path)) ]
-    x_truth = [gt_path[i][0] for i in range(len(gt_path)) ]
-    y_truth = [gt_path[i][1] for i in range(len(gt_path)) ]
+    x_t = [pred_path[i][0] for i in range(len(pred_path))]
+    y_t = [pred_path[i][1] for i in range(len(pred_path))]
+    x_truth = [gt_path[i][0] for i in range(len(gt_path))]
+    y_truth = [gt_path[i][1] for i in range(len(gt_path))]
     plt.plot(x_t, y_t, label="estimate")
     plt.plot(x_truth, y_truth, label="gt")
     plt.legend()
-    plt.axis('equal')
+    plt.axis("equal")
     plt.show()
 
 

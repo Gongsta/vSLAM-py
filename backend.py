@@ -15,12 +15,7 @@ class BundleAdjustment:
         self.cy = cy
         self.fx = fx
 
-        # --------- Bundle Adjustment (Backend, move this somewhere else, because backend runs on seperate thread) ---------
-        if len(self.poses) % 30 == 0:
-
-            self._local_mapping()
-
-    def _local_mapping(self, poses, landmarks_2d_prev, landmarks_2d, landmarks_3d, num_iterations=30):
+    def solve(self, poses, landmarks_2d_prev, landmarks_2d, landmarks_3d, num_iterations=30):
         """
         Optimize poses and points in the local window. Visual odometry suffers from lots of drift, so we need to do local bundle adjusment.
 
@@ -104,18 +99,18 @@ class BundleAdjustment:
         ]
 
         # Landmarks positions have also shifted, so we need to update the state for all landmarks
-        point_id = len(self.poses)
-        for i in range(1, len(self.poses)):
+        point_id = len(poses)
+        for i in range(1, len(poses)):
             new_points_3d = []
-            for j in range(len(self.landmarks_3d[i])):
+            for j in range(len(landmarks_3d[i])):
                 point_id += 1
                 new_points_3d.append(optimizer.vertex(point_id).estimate())
 
             landmarks_3d[i] = np.array(new_points_3d)
 
         if self.visualize:
-            positions = [T[:3, 3] for T in self.poses]
-            orientations = [T[:3, :3] for T in self.poses]
-            self.vis.update(positions, orientations, self.landmarks_3d[-1])
+            positions = [T[:3, 3] for T in poses]
+            orientations = [T[:3, :3] for T in poses]
+            self.vis.update(positions, orientations, landmarks_3d[-1])
         # Optimized parameters
         return poses, landmarks_3d

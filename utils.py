@@ -1,4 +1,3 @@
-
 import numpy as np
 import os
 import cv2
@@ -12,10 +11,36 @@ def download_file(url, save_path):
         print(f"Downloading {url} to {save_path}")
         with urllib.request.urlopen(url) as response:
             content = response.read()
-            with open(save_path, 'wb') as file:
+            with open(save_path, "wb") as file:
                 file.write(content)
     except urllib.error.URLError as e:
         print(f"Failed to download {url}. Reason: {str(e)}")
+
+
+def _compute_absolute_poses(self, relative_poses, include_initial=True):
+    curr_pose = np.eye(4)
+    absolute_poses = []
+
+    if include_initial:
+        absolute_poses.append(curr_pose)
+
+    for T in relative_poses:
+        curr_pose = T @ curr_pose
+        absolute_poses.append(curr_pose)
+    return absolute_poses
+
+
+def _compute_relative_poses(self, absolute_poses):
+    relative_poses = []
+    for i in range(1, len(absolute_poses)):
+        T_base = absolute_poses[i - 1]
+        T_target = absolute_poses[i]
+        T_base_inv = np.linalg.inv(T_base)
+        T_relative = T_base_inv @ T_target
+        relative_poses.append(T_relative)
+
+    return relative_poses
+
 
 def rotation_matrix_to_euler(R):
     if R[2][0] < 1:
@@ -24,11 +49,11 @@ def rotation_matrix_to_euler(R):
             theta_x = math.atan2(-R[2][1], R[2][2])
             theta_z = math.atan2(-R[1][0], R[0][0])
         else:  # R[2][0] = -1
-            theta_y = -math.pi/2
+            theta_y = -math.pi / 2
             theta_x = -math.atan2(R[1][2], R[1][1])
             theta_z = 0
     else:  # R[2][0] = 1
-        theta_y = math.pi/2
+        theta_y = math.pi / 2
         theta_x = math.atan2(R[1][2], R[1][1])
         theta_z = 0
 
