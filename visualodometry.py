@@ -16,7 +16,7 @@ else:
 
 
 import matplotlib.pyplot as plt
-from visualization import Visualizer3D
+from visualization import PangoVisualizer
 
 """
 There are several methods to calculate camera motion:
@@ -40,8 +40,8 @@ class VisualOdometry:
 
     def __init__(self, cx, cy, fx, baseline=0) -> None:
         # --------- General Parameters ---------
-        self.visualize = False
-        self.vis = Visualizer3D()
+        self.visualize = True
+        self.vis = PangoVisualizer()
 
         # --------- Queues ---------
         self.img_left_queue = []
@@ -307,23 +307,22 @@ class VisualOdometry:
         world_points_3d_t = p_w[:3].T  # Discard the homogeneous coordinate
         self.landmarks_3d.append(world_points_3d_t)
 
-        if len(self.poses) % 30 == 0:
-            positions_before = [T[:3, 3] for T in self.poses]
-            self._local_mapping()
-            positions_after = [T[:3, 3] for T in self.poses]
-            fig = plt.figure()
-            ax = fig.add_subplot(projection='3d')
-            ax.plot(*zip(*positions_before), c='r', label='Before')
-            ax.plot(*zip(*positions_after), c='b', label='After')
-            plt.legend()
-            plt.show()
+        # if len(self.poses) % 30 == 0:
+        #     positions_before = [T[:3, 3] for T in self.poses]
+        #     self._local_mapping()
+        #     positions_after = [T[:3, 3] for T in self.poses]
+        #     fig = plt.figure()
+        #     ax = fig.add_subplot(projection='3d')
+        #     ax.plot(*zip(*positions_before), c='r', label='Before')
+        #     ax.plot(*zip(*positions_after), c='b', label='After')
+        #     plt.legend()
+        #     plt.show()
 
         # -------- Visualization --------
         if self.visualize:
             positions = [T[:3, 3] for T in self.poses]
             orientations = [T[:3, :3] for T in self.poses]
-            self.vis.update(positions, orientations)
-            plt.pause(0.001)
+            self.vis.update(positions, orientations, self.landmarks_3d[-1])
         return T
 
     def _drop_invalid_points(self, points_3d, points_2d, points_2d_prev=None):
@@ -449,13 +448,13 @@ class VisualOdometry:
         optimizer.initialize_optimization()
         optimizer.optimize(30)
 
-        # Update State
+        # ----------- Update State -----------
         self.poses = [
             optimizer.vertex(i).estimate().to_homogeneous_matrix() for i in range(len(self.poses))
         ]
         self.relative_poses = self._compute_relative_poses(self.poses)
 
-        # TODO: come up with better way to do this
+        # Landmarks poses have also shifted, so we need to update the state
         point_id = len(self.poses)
         for i in range(1, len(self.poses)):
             new_points_3d = []
