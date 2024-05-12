@@ -5,6 +5,8 @@ Uses the following libraries (installed through `pip`):
 - NumPy (for basic linear algebra)
 - OpenCV (for feature detection / matching)
 - g2o-python (for pose-graph optimization)
+- Pangolin (for real-time visualization)
+    - Note: Pangolin is not available on PyPI, though I'm [pushing for it](https://github.com/stevenlovegrove/Pangolin/issues/925)
 - Matplotlib (for basic plotting)
 
 
@@ -12,7 +14,6 @@ Sources of inspiration:
 - [pyslam](https://github.com/luigifreda/pyslam/tree/master)
 - [twitchslam](https://github.com/geohot/twitchslam/blob/master/slam.py)
 - https://github.com/niconielsen32/ComputerVision
-
 
 
 ## Installation

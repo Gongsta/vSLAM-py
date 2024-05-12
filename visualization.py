@@ -123,11 +123,6 @@ class PangoVisualizer:
             glPointSize(5)
             glColor3f(0.0, 1.0, 0.0)
             pango.glDrawPoints(landmarks)
-            # glxyz = pango.GlBuffer()
-            # glxyz.Upload(landmarks)
-            # pango.RenderVbo(glxyz, GL_POINTS)
-            # for landmark in landmarks:
-            #     glVertex3d(landmark[0], landmark[1], landmark[2])
 
         pango.FinishFrame()
 
