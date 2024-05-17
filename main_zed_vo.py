@@ -79,7 +79,6 @@ def main():
         sl_depth = sl.Mat()
 
     vo = VisualOdometry(cx, cy, fx, baseline)
-    backend = BundleAdjustment(cx, cy, fx)
 
     while True:
         start = time.time()
@@ -107,7 +106,6 @@ def main():
                 break
 
         T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
-        poses, landmarks_3d = backend.solve(vo.poses, vo.landmarks_2d_prev, vo.landmarks_2d, vo.landmarks_3d)
 
         key = cv2.waitKey(1)
         if key == "q":
