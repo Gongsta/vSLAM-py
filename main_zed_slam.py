@@ -1,18 +1,17 @@
 import numpy as np
 from argparse import ArgumentParser
-from multiprocessing import Process, Queue
+
+import multiprocessing as mp
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
-import time
 import cv2
 import os
 
 from frontend import VisualOdometry
 from backend import BundleAdjustment
-from visualization import PangoVisualizer
 
-USE_SIM = True
+USE_SIM = False
 
 if not USE_SIM:
     import pyzed.sl as sl
@@ -21,6 +20,7 @@ from utils import download_file
 
 
 def main():
+    mp.set_start_method("spawn", force=True) # Required to get Zed and Pangolin working in different processes
     parser = ArgumentParser()
     parser.add_argument("--visualize", default=True, action="store_true", help="Show visualization")
     args = parser.parse_args()
@@ -49,16 +49,11 @@ def main():
         cy = K[1, 2]
         fx = K[0, 0]
         baseline = calibration["baseline"]
-
     else:
         zed = sl.Camera()
         # Set configuration parameters
         init_params = sl.InitParameters()
         init_params.camera_resolution = sl.RESOLUTION.VGA
-        init_params.camera_fps = 100
-        init_params.depth_mode = sl.DEPTH_MODE.NONE
-        init_params.coordinate_units = sl.UNIT.METER
-
         # Open the camera
         err = zed.open(init_params)
         if err != sl.ERROR_CODE.SUCCESS:
@@ -67,7 +62,6 @@ def main():
             exit(1)
 
         # Zed Camera Paramters
-        image_size = zed.get_camera_information().camera_configuration.resolution
         cx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cx
         cy = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cy
         fx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.fx
@@ -75,27 +69,27 @@ def main():
             zed.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
         )
 
-        sl_stereo_img = sl.Mat()
-        sl_depth = sl.Mat()
+        zed.close()
+
 
     # --------- Queues for sharing data across Processes ---------
-    cv_img_queue = Queue()
-    frontend_backend_queue = Queue()
-    backend_frontend_queue = Queue()
-    vis_queue = Queue()
+    cv_img_queue = mp.Queue()
+    frontend_backend_queue = mp.Queue()
+    backend_frontend_queue = mp.Queue()
+    vis_queue = mp.Queue()
 
     # --------- Processes ---------
     if USE_SIM:
-        image_grabber = Process(
+        image_grabber = mp.Process(
             target=grab_images_sim, args=(stereo_images, depth_images, cv_img_queue)
         )
     else:
-        image_grabber = Process(
+        image_grabber = mp.Process(
             target=grab_images_realtime,
-            args=(zed, sl_stereo_img, sl_depth, image_size, cv_img_queue),
+            args=(cv_img_queue,),
         )
 
-    frontend_proc = Process(
+    frontend_proc = mp.Process(
         target=process_frontend,
         args=(
             cv_img_queue,
@@ -108,11 +102,11 @@ def main():
             baseline,
         ),
     )
-    backend_proc = Process(
+    backend_proc = mp.Process(
         target=process_backend, args=(frontend_backend_queue, backend_frontend_queue, cx, cy, fx)
     )
 
-    visualizer_proc = Process(target=visualize, args=(vis_queue,))
+    visualizer_proc = mp.Process(target=visualize, args=(vis_queue,))
 
     image_grabber.start()
     frontend_proc.start()
@@ -141,11 +135,32 @@ def grab_images_sim(stereo_images, depth_images, cv_img_queue):
         cv_img_queue.put((cv_img_left, cv_depth))
 
 
-def grab_images_realtime(zed, sl_stereo_img, sl_depth, image_size, cv_img_queue):
+def grab_images_realtime(cv_img_queue):
+    # Sharing a zed object between different process is iffy, so we'll fix it to a single isolated process
+    # https://community.stereolabs.com/t/python-multiprocessing-bug-fix/4310/6
+    zed = sl.Camera()
+    # Set configuration parameters
+    init_params = sl.InitParameters()
+    init_params.camera_resolution = sl.RESOLUTION.VGA
+    init_params.camera_fps = 100
+    init_params.depth_mode = sl.DEPTH_MODE.ULTRA
+    init_params.coordinate_units = sl.UNIT.METER
+
+    # Open the camera
+    err = zed.open(init_params)
+    if err != sl.ERROR_CODE.SUCCESS:
+        print(repr(err))
+        zed.close()
+        exit(1)
+
+    # Zed Camera Paramters
+    image_size = zed.get_camera_information().camera_configuration.resolution
+    sl_stereo_img = sl.Mat()
+    sl_depth = sl.Mat()
     while True:
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
             zed.retrieve_image(sl_stereo_img, sl.VIEW.SIDE_BY_SIDE)
-            zed.retrive_measure(sl_depth, sl.MEASURE.DEPTH)
+            zed.retrieve_measure(sl_depth, sl.MEASURE.DEPTH)
             cv_stereo_img = sl_stereo_img.get_data()[
                 :, :, :3
             ]  # Last channel is padded for byte alignment
@@ -159,13 +174,21 @@ def grab_images_realtime(zed, sl_stereo_img, sl_depth, image_size, cv_img_queue)
         cv_img_queue.put((cv_img_left, cv_depth))
 
 
+import numpy as np
+from OpenGL.GL import *
+
 def visualize(vis_queue):
+    import pypangolin as pango
+    from scipy.spatial.transform import Rotation as R
+    from visualization import PangoVisualizer
+
     vis = PangoVisualizer(title="Frontend Visualizer")
     while True:
         poses, landmarks = vis_queue.get()
         positions = [T[:3, 3] for T in poses]
         orientations = [T[:3, :3] for T in poses]
-        vis.update(positions, orientations, landmarks)
+        vis.update(positions, orientations, landmarks[-1])
+        # vis.update(positions, orientations, landmarks)
 
 
 def process_frontend(

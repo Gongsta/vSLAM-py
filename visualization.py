@@ -148,9 +148,9 @@ if __name__ == "__main__":
         quat = np.array([float(line[4]), float(line[5]), float(line[6]), float(line[7])])
         positions.append(t)
         orientations.append(R.from_quat(quat).as_matrix())
-        viz.draw(positions, orientations)
+        viz.update(positions, orientations)
 
     f.close()
     # Keep drawing
     while True:
-        viz.draw(positions, orientations)
+        viz.update(positions, orientations)
