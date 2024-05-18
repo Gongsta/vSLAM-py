@@ -5,9 +5,9 @@ from scipy.spatial.transform import Rotation as R
 
 
 class PangoVisualizer:
-    def __init__(self, width=1280, height=720) -> None:
+    def __init__(self, title="Trajectory Viewer", width=1280, height=720) -> None:
         self.debug = True
-        self.win = pango.CreateWindowAndBind("Trajectory Viewer", width, height)
+        self.win = pango.CreateWindowAndBind(title, width, height)
         glEnable(GL_DEPTH_TEST)
 
         self.pm = pango.ProjectionMatrix(
