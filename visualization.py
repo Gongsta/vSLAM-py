@@ -137,7 +137,7 @@ class PangoVisualizer:
 
 if __name__ == "__main__":
     # Open file
-    f = open("trajectory.txt", "r")
+    f = open("helpers/trajectory.txt", "r")
 
     viz = PangoVisualizer()
     positions = []
