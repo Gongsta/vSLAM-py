@@ -34,7 +34,7 @@ class VOMethod(Enum):
 class VisualOdometry:
     def __init__(self, cx, cy, fx, baseline=0) -> None:
         # --------- Visualization ---------
-        self.visualize = True
+        self.visualize = False
 
         # --------- Queues ---------
         self.img_left_queue = []
@@ -60,6 +60,7 @@ class VisualOdometry:
         self.landmarks_3d = [None]  # List of landmarks at each time frame, in world frame
         # Relative pose transforms at each time frame, pose is a 4x4 SE3 matrix
         self.poses = [np.eye(4)]  # length T
+        self.poses[-1][0, 3] = 0.01  # Initial pose
         self.relative_poses = []  # length T-1, since relative
 
         # --------- Camera Parameters and Matrices ---------

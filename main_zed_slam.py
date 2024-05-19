@@ -10,7 +10,7 @@ import os
 
 # Using some local imports to prevent interactions amongst libraries, specifically pangolin and pyzed
 
-USE_SIM = False
+USE_SIM = True
 
 from utils import download_file
 
@@ -47,31 +47,32 @@ def main():
     fx = K[0, 0]
     baseline = calibration["baseline"]
     # else:
-        # Importing zed at the top of the file causes issues with pangolin
+    # Importing zed at the top of the file causes issues with pangolin
 
-        # zed = sl.Camera()
-        # # Set configuration parameters
-        # init_params = sl.InitParameters()
-        # init_params.camera_resolution = sl.RESOLUTION.VGA
-        # # Open the camera
-        # err = zed.open(init_params)
-        # if err != sl.ERROR_CODE.SUCCESS:
-        #     print(repr(err))
-        #     zed.close()
-        #     exit(1)
+    # zed = sl.Camera()
+    # # Set configuration parameters
+    # init_params = sl.InitParameters()
+    # init_params.camera_resolution = sl.RESOLUTION.VGA
+    # # Open the camera
+    # err = zed.open(init_params)
+    # if err != sl.ERROR_CODE.SUCCESS:
+    #     print(repr(err))
+    #     zed.close()
+    #     exit(1)
 
-        # # Zed Camera Paramters
-        # cx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cx
-        # cy = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cy
-        # fx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.fx
-        # baseline = (
-        #     zed.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
-        # )
+    # # Zed Camera Paramters
+    # cx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cx
+    # cy = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cy
+    # fx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.fx
+    # baseline = (
+    #     zed.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
+    # )
 
-        # zed.close()
+    # zed.close()
 
     # --------- Queues for sharing data across Processes ---------
     cv_img_queue = mp.Queue()
+    renderer_queue = mp.Queue()
     frontend_backend_queue = mp.Queue()
     backend_frontend_queue = mp.Queue()
     vis_queue = mp.Queue()
@@ -87,6 +88,8 @@ def main():
             args=(cv_img_queue,),
         )
 
+    renderer_proc = mp.Process(target=render, args=(renderer_queue,))
+
     frontend_proc = mp.Process(
         target=process_frontend,
         args=(
@@ -94,6 +97,7 @@ def main():
             frontend_backend_queue,
             backend_frontend_queue,
             vis_queue,
+            renderer_queue,
             cx,
             cy,
             fx,
@@ -108,13 +112,25 @@ def main():
 
     image_grabber.start()
     frontend_proc.start()
-    visualizer_proc.start()
+    # visualizer_proc.start()
+    renderer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
     frontend_proc.join()
-    visualizer_proc.join()
+    # visualizer_proc.join()
+    renderer_proc.join()
     # backend_proc.join()
+
+
+def render(cv_img_queue):
+    from render import Renderer
+
+    renderer = Renderer()
+
+    while True:
+        image, pose = cv_img_queue.get()
+        renderer.update(pose, image)
 
 
 def grab_images_sim(stereo_images, depth_images, cv_img_queue):
@@ -133,7 +149,7 @@ def grab_images_sim(stereo_images, depth_images, cv_img_queue):
 
 
 def grab_images_realtime(cv_img_queue):
-    import pyzed.sl as sl # local import
+    import pyzed.sl as sl  # local import
 
     # Sharing a zed object between different process is iffy, so we'll fix it to a single isolated process
     # https://community.stereolabs.com/t/python-multiprocessing-bug-fix/4310/6
@@ -174,7 +190,7 @@ def grab_images_realtime(cv_img_queue):
 
 
 def visualize(vis_queue):
-    from visualization import PangoVisualizer # local import
+    from visualization import PangoVisualizer  # local import
 
     vis = PangoVisualizer(title="Frontend Visualizer")
     while True:
@@ -186,10 +202,19 @@ def visualize(vis_queue):
 
 
 def process_frontend(
-    cv_img_queue, frontend_backend_queue, backend_frontend_queue, vis_queue, cx, cy, fx, baseline
+    cv_img_queue,
+    frontend_backend_queue,
+    backend_frontend_queue,
+    vis_queue,
+    renderer_queue,
+    cx,
+    cy,
+    fx,
+    baseline,
 ):
 
     from frontend import VisualOdometry
+
     vo = VisualOdometry(cx, cy, fx, baseline)
     counter = 0
     while True:
@@ -197,6 +222,7 @@ def process_frontend(
         T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
         counter += 1
 
+        renderer_queue.put((cv_img_left, vo.poses[-1]))
         vis_queue.put((vo.poses.copy(), vo.landmarks_3d.copy()))
 
         if counter % 50 == 0:  # Run backend every 50 frames
@@ -221,7 +247,7 @@ def process_frontend(
 
 
 def process_backend(frontend_backend_queue, backend_frontend_queue, cx, cy, fx):
-    from backend import BundleAdjustment # local import
+    from backend import BundleAdjustment  # local import
 
     backend = BundleAdjustment(cx, cy, fx)
     while True:
