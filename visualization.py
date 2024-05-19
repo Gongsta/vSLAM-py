@@ -6,6 +6,7 @@ from scipy.spatial.transform import Rotation as R
 
 class PangoVisualizer:
     def __init__(self, title="Trajectory Viewer", width=1280, height=720) -> None:
+
         self.debug = True
         self.win = pango.CreateWindowAndBind(title, width, height)
         glEnable(GL_DEPTH_TEST)
@@ -125,6 +126,7 @@ class PangoVisualizer:
 
         if self.debug:
             pango.glDrawAxis(1)
+            # 2x2m grid with 0.1m step
             self._display_grid(2, 0.1)
 
         if landmarks is not None:

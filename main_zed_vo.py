@@ -8,9 +8,8 @@ import cv2
 import os
 
 from frontend import VisualOdometry
-from backend import BundleAdjustment
 
-USE_SIM = True
+USE_SIM = False
 
 if not USE_SIM:
     import pyzed.sl as sl
@@ -56,7 +55,7 @@ def main():
         init_params = sl.InitParameters()
         init_params.camera_resolution = sl.RESOLUTION.VGA
         init_params.camera_fps = 100
-        init_params.depth_mode = sl.DEPTH_MODE.NONE
+        init_params.depth_mode = sl.DEPTH_MODE.ULTRA
         init_params.coordinate_units = sl.UNIT.METER
 
         # Open the camera
@@ -79,7 +78,6 @@ def main():
         sl_depth = sl.Mat()
 
     vo = VisualOdometry(cx, cy, fx, baseline)
-    backend = BundleAdjustment(cx, cy, fx)
 
     while True:
         start = time.time()
@@ -95,7 +93,7 @@ def main():
         else:
             if zed.grab() == sl.ERROR_CODE.SUCCESS:
                 zed.retrieve_image(sl_stereo_img, sl.VIEW.SIDE_BY_SIDE)
-                zed.retrive_measure(sl_depth, sl.MEASURE.DEPTH)
+                zed.retrieve_measure(sl_depth, sl.MEASURE.DEPTH)
                 cv_stereo_img = sl_stereo_img.get_data()[
                     :, :, :3
                 ]  # Last channel is padded for byte alignment
@@ -107,7 +105,6 @@ def main():
                 break
 
         T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
-        backend.solve(vo.poses, vo.landmarks_2d_prev, vo.landmarks_2d, vo.landmarks_3d)
 
         key = cv2.waitKey(1)
         if key == "q":

@@ -8,69 +8,67 @@ np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 import cv2
 import os
 
-from frontend import VisualOdometry
-from backend import BundleAdjustment
+# Using some local imports to prevent interactions amongst libraries, specifically pangolin and pyzed
 
 USE_SIM = False
-
-if not USE_SIM:
-    import pyzed.sl as sl
 
 from utils import download_file
 
 
 def main():
-    mp.set_start_method("spawn", force=True) # Required to get Zed and Pangolin working in different processes
+    mp.set_start_method(
+        "spawn", force=True
+    )  # Required to get Zed and Pangolin working in different processes
     parser = ArgumentParser()
     parser.add_argument("--visualize", default=True, action="store_true", help="Show visualization")
     args = parser.parse_args()
 
     # --------- Init Zed Camera ---------
-    if USE_SIM:
-        if not os.path.isfile("sample_zed/data.npz"):
-            os.makedirs("sample_zed", exist_ok=True)
-            download_file(
-                "https://github.com/Gongsta/Datasets/raw/main/sample_zed/camera_params.npz",
-                "sample_zed/camera_params.npz",
-            )
-            download_file(
-                "https://github.com/Gongsta/Datasets/raw/main/sample_zed/data.npz",
-                "sample_zed/data.npz",
-            )
-
-        data = np.load("sample_zed/data.npz")
-        calibration = np.load("sample_zed/camera_params.npz")
-
-        stereo_images = data["stereo"]
-        depth_images = data["depth"]
-
-        K = calibration["K"]
-        cx = K[0, 2]
-        cy = K[1, 2]
-        fx = K[0, 0]
-        baseline = calibration["baseline"]
-    else:
-        zed = sl.Camera()
-        # Set configuration parameters
-        init_params = sl.InitParameters()
-        init_params.camera_resolution = sl.RESOLUTION.VGA
-        # Open the camera
-        err = zed.open(init_params)
-        if err != sl.ERROR_CODE.SUCCESS:
-            print(repr(err))
-            zed.close()
-            exit(1)
-
-        # Zed Camera Paramters
-        cx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cx
-        cy = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cy
-        fx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.fx
-        baseline = (
-            zed.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
+    if not os.path.isfile("sample_zed/data.npz"):
+        os.makedirs("sample_zed", exist_ok=True)
+        download_file(
+            "https://github.com/Gongsta/Datasets/raw/main/sample_zed/camera_params.npz",
+            "sample_zed/camera_params.npz",
+        )
+        download_file(
+            "https://github.com/Gongsta/Datasets/raw/main/sample_zed/data.npz",
+            "sample_zed/data.npz",
         )
 
-        zed.close()
+    data = np.load("sample_zed/data.npz")
+    calibration = np.load("sample_zed/camera_params.npz")
 
+    stereo_images = data["stereo"]
+    depth_images = data["depth"]
+
+    K = calibration["K"]
+    cx = K[0, 2]
+    cy = K[1, 2]
+    fx = K[0, 0]
+    baseline = calibration["baseline"]
+    # else:
+        # Importing zed at the top of the file causes issues with pangolin
+
+        # zed = sl.Camera()
+        # # Set configuration parameters
+        # init_params = sl.InitParameters()
+        # init_params.camera_resolution = sl.RESOLUTION.VGA
+        # # Open the camera
+        # err = zed.open(init_params)
+        # if err != sl.ERROR_CODE.SUCCESS:
+        #     print(repr(err))
+        #     zed.close()
+        #     exit(1)
+
+        # # Zed Camera Paramters
+        # cx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cx
+        # cy = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cy
+        # fx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.fx
+        # baseline = (
+        #     zed.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
+        # )
+
+        # zed.close()
 
     # --------- Queues for sharing data across Processes ---------
     cv_img_queue = mp.Queue()
@@ -111,13 +109,12 @@ def main():
     image_grabber.start()
     frontend_proc.start()
     visualizer_proc.start()
-
     # backend_proc.start()
 
     image_grabber.join()
     frontend_proc.join()
-    # backend_proc.join()
     visualizer_proc.join()
+    # backend_proc.join()
 
 
 def grab_images_sim(stereo_images, depth_images, cv_img_queue):
@@ -136,6 +133,8 @@ def grab_images_sim(stereo_images, depth_images, cv_img_queue):
 
 
 def grab_images_realtime(cv_img_queue):
+    import pyzed.sl as sl # local import
+
     # Sharing a zed object between different process is iffy, so we'll fix it to a single isolated process
     # https://community.stereolabs.com/t/python-multiprocessing-bug-fix/4310/6
     zed = sl.Camera()
@@ -143,7 +142,7 @@ def grab_images_realtime(cv_img_queue):
     init_params = sl.InitParameters()
     init_params.camera_resolution = sl.RESOLUTION.VGA
     init_params.camera_fps = 100
-    init_params.depth_mode = sl.DEPTH_MODE.ULTRA
+    init_params.depth_mode = sl.DEPTH_MODE.NEURAL
     init_params.coordinate_units = sl.UNIT.METER
 
     # Open the camera
@@ -174,13 +173,8 @@ def grab_images_realtime(cv_img_queue):
         cv_img_queue.put((cv_img_left, cv_depth))
 
 
-import numpy as np
-from OpenGL.GL import *
-
 def visualize(vis_queue):
-    import pypangolin as pango
-    from scipy.spatial.transform import Rotation as R
-    from visualization import PangoVisualizer
+    from visualization import PangoVisualizer # local import
 
     vis = PangoVisualizer(title="Frontend Visualizer")
     while True:
@@ -194,6 +188,8 @@ def visualize(vis_queue):
 def process_frontend(
     cv_img_queue, frontend_backend_queue, backend_frontend_queue, vis_queue, cx, cy, fx, baseline
 ):
+
+    from frontend import VisualOdometry
     vo = VisualOdometry(cx, cy, fx, baseline)
     counter = 0
     while True:
@@ -225,6 +221,8 @@ def process_frontend(
 
 
 def process_backend(frontend_backend_queue, backend_frontend_queue, cx, cy, fx):
+    from backend import BundleAdjustment # local import
+
     backend = BundleAdjustment(cx, cy, fx)
     while True:
         poses, landmarks_2d, landmarks_3d = frontend_backend_queue.get()

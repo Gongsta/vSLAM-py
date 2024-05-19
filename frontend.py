@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 from enum import Enum
 import g2o
-import matplotlib.pyplot as plt
 
 CUDA = False
 if CUDA:
@@ -188,6 +187,9 @@ class VisualOdometry:
             depth[depth < 0.0] = np.nan
             self.depth_queue.append(depth)
 
+            if self.visualize:
+                self._visualize_depth(depth)
+
         # ---------- Compute and Match Keypoints (kpts) across frames -----------
         if len(self.img_left_queue) < 2:
             return
@@ -196,6 +198,8 @@ class VisualOdometry:
         img_left_t = self.img_left_queue[-1]
 
         matched_kpts_t_1, matched_kpts_t = self._detect_and_match_2d_kpts(img_left_t_1, img_left_t)
+        if len(matched_kpts_t) == 0:  # TODO: Check consequences of this
+            return
 
         # ---------- Solve for camera motion (3 Different Methods) -----------
         if method == VOMethod.VO_2D_2D:
