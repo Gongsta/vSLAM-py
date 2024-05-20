@@ -1,27 +1,52 @@
+from PIL import Image
 import numpy as np
 import pypangolin as pango
 from OpenGL.GL import *
 from scipy.spatial.transform import Rotation as R
 
+np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
+
+apple_img = Image.open("apple.jpg")
+apple_img.load()
+apple_img = np.asarray(apple_img, dtype="uint8")
+
+canonical_T_optical = np.array([[0, 0, 1, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
+optical_T_canonical = np.linalg.inv(canonical_T_optical)
+
+# Pango has a different optical frame when rendering the s_cam: z is facing us,  y up, x right
+# trust me, I sanity checked this.... it took so long
+canonical_T_pango_optical = np.array([[0, 0, -1, 0], [-1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
+pango_optical_T_canonical = np.linalg.inv(canonical_T_pango_optical)
+
 
 class Renderer:
     """Renders the display that one would see in the VR Headset."""
 
-    def __init__(self, title="VR Display", width=672, height=376) -> None:
+    def __init__(self, title="VR Display", width=672, height=376, save_render=False) -> None:
         self.debug = True
         self.win = pango.CreateWindowAndBind(title, width, height)
         self.width = width
         self.height = height
+        self.save_render = save_render
+        if self.save_render:
+            if not os.path.isdir("renders"):
+                os.makedirs("renders")
+
+        self.counter = 0  # keep track of the number of renders
 
         glEnable(GL_DEPTH_TEST)
 
         self.fx = 420
+        self.fy = 420
+        self.cx = width / 2
+        self.cy = height / 2
         self.pm = pango.ProjectionMatrix(
-            width, height, self.fx, self.fx, width / 2, height / 2, 0.1, 1000
+            width, height, self.fx, self.fy, self.cx, self.cy, 0.1, 1000
         )  # width, height, fx, fy, cx, cy, near clip, far clip
         self.mv = pango.ModelViewLookAt(
             0.0, 0.0, 0.0, 1, 0, 0, pango.AxisZ
         )  # Using Canonical Frame (Z-up)
+        # The camera uses a -z forward, y up coordinate system...
         self.s_cam = pango.OpenGlRenderState(self.pm, self.mv)
 
         self.handler = pango.Handler3D(self.s_cam)
@@ -39,17 +64,27 @@ class Renderer:
 
         self.texture = pango.GlTexture(width, height, GL_RGB, False, 0, GL_RGB, GL_UNSIGNED_BYTE)
 
-        apple_img = cv2.imread("apple.jpg")
         self.apple_texture = pango.GlTexture(
             apple_img.shape[1], apple_img.shape[0], GL_RGB, False, 0, GL_RGB, GL_UNSIGNED_BYTE
         )
         self.apple_texture.Upload(apple_img, GL_BGR, GL_UNSIGNED_BYTE)
 
-        self.pose = np.eye(4)  # w_T_k
+        self.pose = np.eye(4)  # w_T_k, world to camera pose, given canonical to canonical
 
     def update(self, pose, image):
         # ------- Update Camera Position and Orientation -------
-        self.move_camera(pose)
+        self.update_camera_pose(pose) # comment out if you want to move the camera yourself
+
+        # world canonical frame to camera optical frame. I am 100% sure about this
+        w_T_k = np.array(self.s_cam.GetModelViewMatrix().Inverse().Matrix())
+        # canonical to canonical
+        w_T_k = w_T_k @ pango_optical_T_canonical
+
+        DEBUG = True
+        if DEBUG:
+            print("pose cam", w_T_k)
+            print("target pose", self.pose)
+            pango.glDrawAxis(1)
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self.d_cam.Activate(self.s_cam)
@@ -58,66 +93,59 @@ class Renderer:
         self.render_background_video(image)
 
         # ------- Render 3D Objects -------
-        apple_img = cv2.imread("apple.jpg")
         self.render_apple(apple_img.shape[1], apple_img.shape[0], 0.1)
 
         pango.FinishFrame()
 
-    def move_camera(self, pose):
+        if self.save_render:
+            self.d_cam.SaveOnRender(f"renders/render{self.counter}.jpg")
+        self.counter += 1
+
+    def update_camera_pose(self, pose):
         self.pose = pose
-        # Pango uses axis-angle representation
-        position = pose[:3, 3]
-        t = (self.pose @ np.array([1, 0, 0, 1])).T
-        print(t)
-        self.mv = pango.ModelViewLookAt(
-            position[0], position[1], position[2], t[0], t[1], t[2], pango.AxisZ
+        self.s_cam.SetModelViewMatrix(
+            pango.OpenGlMatrix(np.linalg.inv(self.pose @ canonical_T_pango_optical))
         )
-        self.s_cam.SetModelViewMatrix(self.mv)
 
     def render_background_video(self, image):
-        # Draw the texture on a large quad in the background
         self.texture.Upload(image[:, :, :3].copy(), GL_BGR, GL_UNSIGNED_BYTE)
-
         glEnable(GL_TEXTURE_2D)
         self.texture.Bind()
+
+        # Calculate the position and size of the quad relative to the camera
+        z = 10.0  # Fixed depth
+        half_width = (self.width / 2) * z / self.fx
+        half_height = (self.height / 2) * z / self.fy
+        cx_offset = (self.cx - self.width / 2) * z / self.fx
+        cy_offset = (self.cy - self.height / 2) * z / self.fy
+        # Vertices in camera space
+        vertices_camera = np.array(
+            [
+                [-half_width + cx_offset, half_height + cy_offset, z, 1.0],
+                [-half_width + cx_offset, -half_height + cy_offset, z, 1.0],
+                [half_width + cx_offset, -half_height + cy_offset, z, 1.0],
+                [half_width + cx_offset, half_height + cy_offset, z, 1.0],
+            ]
+        ).T
+
+        vertices_camera_canonical = canonical_T_optical @ vertices_camera
+
+        # Transform vertices to world space
+        vertices_world = self.pose @ vertices_camera_canonical
+        # print("world vertices\n", vertices_world)
+
         glBegin(GL_QUADS)
-        # Mapping from 2D to 3D
-        z = 10.0  # fixed depth to 10 meters away. Note the coordinates are in canonical frame.
-        # p_w = w_T_k * p_k
-
-        # First vertex
-        p_o = np.array([[-self.width / 2 * z / self.fx, self.height / 2 * z / self.fx, z, 1]]).T
-        # coordinates in optical frame, from camera perspective
-
-        canonical_T_optical = np.array([[0, 0, 1, 0], [1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1]])
-
-        p_c = canonical_T_optical @ p_o
-        p_w = self.pose @ p_c  # world frame coordinates
+        # Draw the texture on a quad in the background relative to the camera
         glTexCoord2f(0.0, 0.0)
-        glVertex3f(p_w[0], p_w[1], p_w[2])
-
-        # Second vertex
-        p_o = np.array([[-self.width / 2 * z / self.fx, -self.height / 2 * z / self.fx, z, 1]]).T
-        p_c = canonical_T_optical @ p_o
-        p_w = self.pose @ p_c
+        glVertex3f(vertices_world[0, 0], vertices_world[1, 0], vertices_world[2, 0])
         glTexCoord2f(0.0, 1.0)
-        glVertex3f(p_w[0], p_w[1], p_w[2])
-
-        # Third vertex
-        p_o = np.array([[self.width / 2 * z / self.fx, -self.height / 2 * z / self.fx, z, 1]]).T
-        p_c = canonical_T_optical @ p_o
-        p_w = self.pose @ p_c
+        glVertex3f(vertices_world[0, 1], vertices_world[1, 1], vertices_world[2, 1])
         glTexCoord2f(1.0, 1.0)
-        glVertex3f(p_w[0], p_w[1], p_w[2])
-
-        # Fourth vertex
-        p_o = np.array([[self.width / 2 * z / self.fx, self.height / 2 * z / self.fx, z, 1]]).T
-        p_c = canonical_T_optical @ p_o
-        p_w = self.pose @ p_c
+        glVertex3f(vertices_world[0, 2], vertices_world[1, 2], vertices_world[2, 2])
         glTexCoord2f(1.0, 0.0)
-        glVertex3f(p_w[0], p_w[1], p_w[2])
-
+        glVertex3f(vertices_world[0, 3], vertices_world[1, 3], vertices_world[2, 3])
         glEnd()
+
         glDisable(GL_TEXTURE_2D)
 
     def render_apple(self, width, height, scale):
@@ -143,10 +171,19 @@ class Renderer:
         glEnd()
         glDisable(GL_TEXTURE_2D)
 
+    def render_cube(self):
+        translation = self.pose[:3, 3]
+        quat = R.from_matrix(self.pose[:3, :3]).as_quat()
+        # Apply the translation
+        glPushMatrix()
+        glTranslatef(translation[0], translation[1], translation[2])
+        glRotatef(2 * np.arccos(quat[0]) * 180 / np.pi, quat[1], quat[2], quat[3])
+        pango.glDrawColouredCube()
+        glPopMatrix()
+
 
 import os
 from utils import download_file
-import cv2
 
 if __name__ == "__main__":
     # Open file
@@ -170,10 +207,13 @@ if __name__ == "__main__":
     renderer = Renderer()
     counter = 0
     pose = np.eye(4)
-    pose[:3, 3] = np.array([0.01, 0, 0])
+    pose[:3, 3] = np.array([0.0, 1.0, 0])
+    pose[:3, :3] = R.from_euler("xyz", [3.14, 0, 0]).as_matrix()
+
     while True:
         cv_stereo_img = stereo_images[counter % len(stereo_images)]
         counter += 1
         cv_img_left = cv_stereo_img[:, : cv_stereo_img.shape[1] // 2, :]
-        renderer.update(pose, cv_img_left)
-        pose[:3, 3] += np.array([0.01, 0.01, 0])
+        renderer.update(pose.copy(), cv_img_left)
+        pose[:3, 3] += np.random.rand(3)
+        pose[:3, :3] = R.from_euler("xyz", np.random.rand(3)).as_matrix()
