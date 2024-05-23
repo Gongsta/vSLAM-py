@@ -4,6 +4,8 @@ import multiprocessing as mp
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+np.random.seed(0)
+
 
 def extract(tar_url, extract_path="."):
     tar = tarfile.open(tar_url, "r")
@@ -47,6 +49,7 @@ def main():
     rgb_image_paths = read_file_list(f"{dataset_name}/rgb.txt")
     gt_paths = read_file_list(f"{dataset_name}/groundtruth.txt")
 
+    print("Associating depth and rgb images")
     matches = associate(depth_image_paths, rgb_image_paths, 0.0, 0.02)
     gt_matches = associate(depth_image_paths, gt_paths, 0.0, 0.02)
 
@@ -108,6 +111,7 @@ def main():
     from main_zed_slam import (
         grab_rgbd_images_sim,
         process_frontend,
+        mock_process_frontend,
         process_backend,
         render,
         visualize_path,
@@ -139,6 +143,16 @@ def main():
             initial_pose,
         ),
     )
+    # frontend_proc = mp.Process(
+    #     target=mock_process_frontend,
+    #     args=(
+    #         cv_img_queue,
+    #         gt_poses,
+    #         vis_queue,
+    #         renderer_queue,
+    #     ),
+    # )
+
     backend_proc = mp.Process(
         target=process_backend, args=(frontend_backend_queue, backend_frontend_queue, cx, cy, fx)
     )
@@ -148,7 +162,7 @@ def main():
     image_grabber.start()
     frontend_proc.start()
 
-    FAST = False
+    FAST = True
     if not FAST:
         path_visualizer_proc.start()
         renderer_proc.start()

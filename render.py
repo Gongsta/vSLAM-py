@@ -23,7 +23,7 @@ class Renderer:
     """Renders the display that one would see in the VR Headset."""
 
     def __init__(self, title="VR Display", width=672, height=376, save_render=False) -> None:
-        self.debug = True
+        self.debug = False
         self.win = pango.CreateWindowAndBind(title, width, height)
         self.width = width
         self.height = height
@@ -73,18 +73,16 @@ class Renderer:
 
     def update(self, pose, image):
         # ------- Update Camera Position and Orientation -------
-        self.update_camera_pose(pose) # comment out if you want to move the camera yourself
+        self.pose = pose
+        if not self.debug:
+            self.s_cam.SetModelViewMatrix(
+                pango.OpenGlMatrix(np.linalg.inv(self.pose @ canonical_T_pango_optical))
+            )
 
         # world canonical frame to camera optical frame. I am 100% sure about this
         w_T_k = np.array(self.s_cam.GetModelViewMatrix().Inverse().Matrix())
         # canonical to canonical
         w_T_k = w_T_k @ pango_optical_T_canonical
-
-        DEBUG = True
-        if DEBUG:
-            print("pose cam", w_T_k)
-            print("target pose", self.pose)
-            pango.glDrawAxis(1)
 
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         self.d_cam.Activate(self.s_cam)
@@ -93,19 +91,20 @@ class Renderer:
         self.render_background_video(image)
 
         # ------- Render 3D Objects -------
-        self.render_apple(apple_img.shape[1], apple_img.shape[0], 0.1)
+        self.render_apple(apple_img.shape[1], apple_img.shape[0], 0.5)
+
+        if self.debug:
+            print("pose cam\n", w_T_k)
+            print("target pose\n", pose)
+            pango.glDrawAxis(1)
+            self.display_camera_position()
 
         pango.FinishFrame()
 
         if self.save_render:
             self.d_cam.SaveOnRender(f"renders/render{self.counter}.jpg")
-        self.counter += 1
 
-    def update_camera_pose(self, pose):
-        self.pose = pose
-        self.s_cam.SetModelViewMatrix(
-            pango.OpenGlMatrix(np.linalg.inv(self.pose @ canonical_T_pango_optical))
-        )
+        self.counter += 1
 
     def render_background_video(self, image):
         self.texture.Upload(image[:, :, :3].copy(), GL_BGR, GL_UNSIGNED_BYTE)
@@ -148,7 +147,7 @@ class Renderer:
 
         glDisable(GL_TEXTURE_2D)
 
-    def render_apple(self, width, height, scale):
+    def render_apple(self, width, height, scale, base_x=4.0, base_y=4.0, base_z=1.0):
         """
         TODO: Figure this out
         """
@@ -157,27 +156,31 @@ class Renderer:
         self.apple_texture.Bind()
         glBegin(GL_QUADS)
         # Mapping from 2D to 3D
-        z = 1.0
+        z = base_z
         x = width / 2 * z / self.fx * scale
         y = height / 2 * z / self.fx * scale
+        if self.debug:
+            print(f"x: {base_x - x} - {base_x + x}, y: {base_y - y} - {base_y + y}, z: {z}")
         glTexCoord2f(0.0, 0.0)
-        glVertex3f(z, -x, y)
+        glVertex3f(z, base_x - x, base_y + y)
         glTexCoord2f(0.0, 1.0)
-        glVertex3f(z, -x, -y)
+        glVertex3f(z, base_x - x, base_y - y)
         glTexCoord2f(1.0, 1.0)
-        glVertex3f(z, x, -y)
+        glVertex3f(z, base_x + x, base_y - y)
         glTexCoord2f(1.0, 0.0)
-        glVertex3f(z, x, y)
+        glVertex3f(z, base_x + x, base_y + y)
         glEnd()
         glDisable(GL_TEXTURE_2D)
 
-    def render_cube(self):
+    def display_camera_position(self):
+        """ """
         translation = self.pose[:3, 3]
-        quat = R.from_matrix(self.pose[:3, :3]).as_quat()
+        rotvec = R.from_matrix(self.pose[:3, :3]).as_rotvec(degrees=True)
+        angle = np.linalg.norm(rotvec)
         # Apply the translation
         glPushMatrix()
         glTranslatef(translation[0], translation[1], translation[2])
-        glRotatef(2 * np.arccos(quat[0]) * 180 / np.pi, quat[1], quat[2], quat[3])
+        glRotatef(angle, rotvec[0], rotvec[1], rotvec[2])  # expects axis-angle representation
         pango.glDrawColouredCube()
         glPopMatrix()
 

@@ -40,15 +40,8 @@ def main():
         ret, cv_img_left = capLeft.read()
         if ret:
             start = time.time()
-            T = vo.process_frame(cv_img_left)
-            if curr_pose is None:
-                curr_pose = np.eye(4)
-            else:
-                curr_pose = np.matmul(curr_pose, np.linalg.inv(T))
-
-            poses.append(curr_pose)
-
-            vis.update(poses)
+            vo.process_frame(cv_img_left)
+            vis.update(vo.poses)
 
             key = cv2.waitKey(1)
             if key == "q":

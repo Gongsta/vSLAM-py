@@ -2,6 +2,7 @@ import g2o
 import numpy as np
 from visualization import PangoVisualizer
 
+np.random.seed(0)
 
 class BundleAdjustment:
     def __init__(self, cx, cy, fx) -> None:

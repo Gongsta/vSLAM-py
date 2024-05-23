@@ -44,10 +44,11 @@ python3 main_stereo_camera.py
 ## Discussions
 
 ### Why Python
-Python is very much more flexible than C++. It's a lot easier to debug a Python system. It would have taken me a lot longer to write this in C++.
+Python is much more flexible than C++, and easier to set up. Trying this stuff should be as easy as running 2-3 commands in the terminal. If it was written in C++, you'd need to install dependencies, compile the code, and then run it. In Python, you simply need to `pip` install the requirements, and you are good to go. Also, I find it a lot easier to debug a Python system (at this minimum codebase scale). In C++, I'd need something like `gdb`.
 
-Python will never beat C++ performanace due to its interpreted nature. However, all libraries I use are written in C++ under the hood (OpenCV, g2o, Pangolin), so the performance hit is minimal. Python is merely a high-level interface to these libraries.
+Of course, Python will never beat C++ performance due to its interpreted nature. However, all libraries I use are written in C++ under the hood (OpenCV, g2o, Pangolin), so the performance hit is minimal. Python is merely a high-level interface to these libraries.
 
+Overall, it would have taken me a lot longer to write this in C++, and much less people would want to try it out.
 ### Monocular vs. Stereo Visual SLAM
 
 Mono and stereo visual odometry share many of the same techniques.
@@ -95,7 +96,7 @@ absolute_translational_error.min 0.217567 m
 absolute_translational_error.max 1.714041 m
 ```
 
-![2024-05-22](results/2024-05-22.png)
+!Also, [2024-05-22](results/2024-05-22.png)
 
 
 2024-05-21: Added the dataset. Initial results. Ew...

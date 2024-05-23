@@ -231,7 +231,7 @@ def visualize_path(vis_queue, gt_poses=None):
     vis = PangoVisualizer(title="Path Visualizer")
     while True:
         poses, landmarks = vis_queue.get()
-        vis.update(poses, landmarks[-1], gt_poses)
+        vis.update(poses, landmarks[-1], gt_poses[: len(poses)])
 
 
 def process_frontend(
@@ -248,13 +248,19 @@ def process_frontend(
     initial_pose=np.eye(4),
 ):
 
-    from frontend import VisualOdometry
+    from frontend import VisualOdometry, VOMethod
 
     vo = VisualOdometry(cx, cy, fx, baseline, initial_pose)
     counter = 0
     while True:
         cv_img_left, cv_depth, timestamp = cv_img_queue.get()
-        T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth, timestamp=timestamp)
+        T = vo.process_frame(
+            cv_img_left,
+            img_right=None,
+            depth=cv_depth,
+            timestamp=timestamp,
+            method=VOMethod.VO_3D_2D,
+        )
         counter += 1
 
         renderer_queue.put((cv_img_left, vo.poses[-1]))
@@ -282,6 +288,20 @@ def process_frontend(
         key = cv2.waitKey(1)
         if key == "q":
             break
+
+
+def mock_process_frontend(
+    cv_img_queue,
+    gt_poses,
+    vis_queue,
+    renderer_queue,
+):
+    counter = 0
+    while True:
+        cv_img_left, cv_depth, timestamp = cv_img_queue.get()
+        renderer_queue.put((cv_img_left, gt_poses[counter]))
+        vis_queue.put((gt_poses[: counter + 1].copy(), [None]))
+        counter += 1
 
 
 def process_backend(frontend_backend_queue, backend_frontend_queue, cx, cy, fx):

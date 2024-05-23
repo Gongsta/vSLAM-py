@@ -42,8 +42,8 @@ trajectory and the estimated trajectory.
 import sys
 import numpy
 import argparse
-import eval.associate as associate
-
+import associate
+from datetime import datetime
 
 
 def align(model, data):
@@ -121,11 +121,13 @@ if __name__ == "__main__":
     """
     )
     parser.add_argument(
-        "first_file", help="ground truth trajectory (format: timestamp tx ty tz qx qy qz qw)",
+        "--first_file",
+        help="ground truth trajectory (format: timestamp tx ty tz qx qy qz qw)",
         default="eval/groundtruth.txt",
     )
     parser.add_argument(
-        "second_file", help="estimated trajectory (format: timestamp tx ty tz qx qy qz qw)",
+        "--second_file",
+        help="estimated trajectory (format: timestamp tx ty tz qx qy qz qw)",
         default="poses.txt",
     )
     parser.add_argument(
@@ -149,13 +151,14 @@ if __name__ == "__main__":
         help="save associated first and aligned second trajectory to disk (format: stamp1 x1 y1 z1 stamp2 x2 y2 z2)",
     )
     parser.add_argument(
-        "--plot", help="plot the first and the aligned second trajectory to an image (format: png)",
-        default=True,
+        "--plot",
+        help="plot the first and the aligned second trajectory to an image (format: png)",
+        default="results/" + datetime.now().strftime("%Y-%m-%d") + ".png",
     )
     parser.add_argument(
         "--verbose",
         help="print all evaluation data (otherwise, only the RMSE absolute translational error in meters after alignment will be printed)",
-        action="store_true",
+        default=True,
     )
     args = parser.parse_args()
 
@@ -171,10 +174,10 @@ if __name__ == "__main__":
         )
 
     first_xyz = numpy.matrix(
-        [[float(value) for value in first_list[a][0:3]] for a, b in matches]
+        [[float(value) for value in first_list[a][0:3]] for a, b in matches.items()]
     ).transpose()
     second_xyz = numpy.matrix(
-        [[float(value) * float(args.scale) for value in second_list[b][0:3]] for a, b in matches]
+        [[float(value) * float(args.scale) for value in second_list[b][0:3]] for a, b in matches.items()]
     ).transpose()
     rot, trans, trans_error = align(second_xyz, first_xyz)
 
@@ -193,18 +196,6 @@ if __name__ == "__main__":
     ).transpose()
     second_xyz_full_aligned = rot * second_xyz_full + trans
 
-    # if args.verbose:
-    #     print "compared_pose_pairs %d pairs"%(len(trans_error))
-
-    #     print "absolute_translational_error.rmse %f m"%numpy.sqrt(numpy.dot(trans_error,trans_error) / len(trans_error))
-    #     print "absolute_translational_error.mean %f m"%numpy.mean(trans_error)
-    #     print "absolute_translational_error.median %f m"%numpy.median(trans_error)
-    #     print "absolute_translational_error.std %f m"%numpy.std(trans_error)
-    #     print "absolute_translational_error.min %f m"%numpy.min(trans_error)
-    #     print "absolute_translational_error.max %f m"%numpy.max(trans_error)
-    # else:
-    #     print "%f"%numpy.sqrt(numpy.dot(trans_error,trans_error) / len(trans_error))
-
     if args.save_associations:
         file = open(args.save_associations, "w")
         file.write(
@@ -212,7 +203,7 @@ if __name__ == "__main__":
                 [
                     "%f %f %f %f %f %f %f %f" % (a, x1, y1, z1, b, x2, y2, z2)
                     for (a, b), (x1, y1, z1), (x2, y2, z2) in zip(
-                        matches, first_xyz.transpose().A, second_xyz_aligned.transpose().A
+                        matches.items(), first_xyz.transpose().A, second_xyz_aligned.transpose().A
                     )
                 ]
             )
@@ -248,7 +239,7 @@ if __name__ == "__main__":
 
         label = "difference"
         for (a, b), (x1, y1, z1), (x2, y2, z2) in zip(
-            matches, first_xyz.transpose().A, second_xyz_aligned.transpose().A
+            matches.items(), first_xyz.transpose().A, second_xyz_aligned.transpose().A
         ):
             ax.plot([x1, x2], [y1, y2], "-", color="red", label=label)
             label = ""
@@ -257,5 +248,19 @@ if __name__ == "__main__":
 
         ax.set_xlabel("x [m]")
         ax.set_ylabel("y [m]")
-        plt.show()
-        # plt.savefig(args.plot, dpi=90)
+        plt.savefig(args.plot, dpi=90)
+
+    if args.verbose:
+        print("compared_pose_pairs %d pairs" % len(trans_error))
+
+        print(
+            "absolute_translational_error.rmse %f m"
+            % numpy.sqrt(numpy.dot(trans_error, trans_error) / len(trans_error))
+        )
+        print("absolute_translational_error.mean %f m" % numpy.mean(trans_error))
+        print("absolute_translational_error.median %f m" % numpy.median(trans_error))
+        print("absolute_translational_error.std %f m" % numpy.std(trans_error))
+        print("absolute_translational_error.min %f m" % numpy.min(trans_error))
+        print("absolute_translational_error.max %f m" % numpy.max(trans_error))
+    else:
+        print("%f" % numpy.sqrt(numpy.dot(trans_error, trans_error) / len(trans_error)))
