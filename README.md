@@ -69,6 +69,23 @@ I will be benchmarking against the [fr1/desk]() dataset.
 
 
 2024-05-22: Realized that I had my transforms inverted... slightly better results!
+
+
+Before
+```python
+self.relative_poses.append(T)
+self.poses.append(self.relative_poses[-1] @ self.poses[-1])
+```
+
+After
+
+```python
+T = np.linalg.inv(T)
+self.relative_poses.append(T)
+self.poses.append(self.poses[-1] @ self.relative_poses[-1])
+```
+
+```
 compared_pose_pairs 570 pairs
 absolute_translational_error.rmse 0.918237 m
 absolute_translational_error.mean 0.829502 m
@@ -76,8 +93,10 @@ absolute_translational_error.median 0.752555 m
 absolute_translational_error.std 0.393810 m
 absolute_translational_error.min 0.217567 m
 absolute_translational_error.max 1.714041 m
+```
 
 ![2024-05-22](results/2024-05-22.png)
+
 
 2024-05-21: Added the dataset. Initial results. Ew...
 
@@ -85,10 +104,10 @@ absolute_translational_error.max 1.714041 m
 
 ```
 compared_pose_pairs 570 pairs
-absolute_translational_error.rmse 1.200285 m
-absolute_translational_error.mean 1.130487 m
-absolute_translational_error.median 1.004542 m
-absolute_translational_error.std 0.403340 m
-absolute_translational_error.min 0.382651 m
-absolute_translational_error.max 2.227963 m
+absolute_translational_error.rmse 0.953799 m
+absolute_translational_error.mean 0.892556 m
+absolute_translational_error.median 0.849063 m
+absolute_translational_error.std 0.336267 m
+absolute_translational_error.min 0.216631 m
+absolute_translational_error.max 1.840347 m
 ```
