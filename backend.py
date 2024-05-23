@@ -8,7 +8,7 @@ class BundleAdjustment:
 
         # --------- Visualization ---------
         self.visualize = True
-        self.vis = PangoVisualizer()
+        self.vis = PangoVisualizer(title="Bundle Adjustment")
 
         # --------- Camera Parameters and Matrices ---------
         self.cx = cx
@@ -94,9 +94,7 @@ class BundleAdjustment:
 
         # ----------- Update State -----------
         # Camera poses
-        poses = [
-            optimizer.vertex(i).estimate().to_homogeneous_matrix() for i in range(len(poses))
-        ]
+        poses = [optimizer.vertex(i).estimate().to_homogeneous_matrix() for i in range(len(poses))]
 
         # Landmarks positions have also shifted, so we need to update the state for all landmarks
         point_id = len(poses)

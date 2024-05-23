@@ -40,6 +40,7 @@ def main():
 
     stereo_images = data["stereo"]
     depth_images = data["depth"]
+    timestamps = [i for i in range(len(stereo_images))]
 
     K = calibration["K"]
     cx = K[0, 2]
@@ -71,16 +72,25 @@ def main():
     # zed.close()
 
     # --------- Queues for sharing data across Processes ---------
+    # image grabber -> frontend
     cv_img_queue = mp.Queue()
+    # frontend -> renderer
     renderer_queue = mp.Queue()
     frontend_backend_queue = mp.Queue()
     backend_frontend_queue = mp.Queue()
+
+    # frontend -> loop_closure
+    descriptors_queue = mp.Queue()
+    # loop_closure -> backend
+    loop_closure_queue = mp.Queue()
+    # frontend -> visualizer
     vis_queue = mp.Queue()
 
     # --------- Processes ---------
     if USE_SIM:
         image_grabber = mp.Process(
-            target=grab_images_sim, args=(stereo_images, depth_images, cv_img_queue)
+            target=grab_stereo_images_sim,
+            args=(stereo_images, depth_images, timestamps, cv_img_queue),
         )
     else:
         image_grabber = mp.Process(
@@ -89,6 +99,9 @@ def main():
         )
 
     renderer_proc = mp.Process(target=render, args=(renderer_queue,))
+    loop_closure_proc = mp.Process(
+        target=loop_closure, args=(descriptors_queue, loop_closure_queue)
+    )
 
     frontend_proc = mp.Process(
         target=process_frontend,
@@ -98,6 +111,7 @@ def main():
             backend_frontend_queue,
             vis_queue,
             renderer_queue,
+            descriptors_queue,
             cx,
             cy,
             fx,
@@ -108,36 +122,57 @@ def main():
         target=process_backend, args=(frontend_backend_queue, backend_frontend_queue, cx, cy, fx)
     )
 
-    visualizer_proc = mp.Process(target=visualize, args=(vis_queue,))
+    path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue,))
 
     image_grabber.start()
     frontend_proc.start()
-    # visualizer_proc.start()
+    path_visualizer_proc.start()
     renderer_proc.start()
+    loop_closure_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
     frontend_proc.join()
-    # visualizer_proc.join()
+    path_visualizer_proc.join()
     renderer_proc.join()
+    loop_closure_proc.join()
     # backend_proc.join()
 
 
 def render(cv_img_queue):
     from render import Renderer
 
-    renderer = Renderer()
+    renderer = None
 
     while True:
         image, pose = cv_img_queue.get()
+        width, height = image.shape[1], image.shape[0]
+        if renderer is None:
+            renderer = Renderer(width=width, height=height)
         renderer.update(pose, image)
 
 
-def grab_images_sim(stereo_images, depth_images, cv_img_queue):
+def grab_rgbd_images_sim(rgb_images, depth_images, timestamps, cv_img_queue):
+    # --------- Grag Images ---------
+    image_counter = 0
+    while True:
+        cv_img_left = rgb_images[image_counter]
+        cv_depth = depth_images[image_counter]
+        timestamp = timestamps[image_counter]
+
+        image_counter += 1
+        if image_counter >= len(rgb_images):
+            break
+
+        cv_img_queue.put((cv_img_left, cv_depth, timestamp))
+
+
+def grab_stereo_images_sim(stereo_images, depth_images, timestamps, cv_img_queue):
     # --------- Grag Images ---------
     image_counter = 0
     while True:
         cv_stereo_img = stereo_images[image_counter]
+        timestamp = timestamps[image_counter]
         cv_img_left = cv_stereo_img[:, : cv_stereo_img.shape[1] // 2, :]
         cv_depth = depth_images[image_counter]
 
@@ -145,7 +180,7 @@ def grab_images_sim(stereo_images, depth_images, cv_img_queue):
         if image_counter >= len(stereo_images):
             break
 
-        cv_img_queue.put((cv_img_left, cv_depth))
+        cv_img_queue.put((cv_img_left, cv_depth, timestamp))
 
 
 def grab_images_realtime(cv_img_queue):
@@ -174,6 +209,7 @@ def grab_images_realtime(cv_img_queue):
     sl_depth = sl.Mat()
     while True:
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
+            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)
             zed.retrieve_image(sl_stereo_img, sl.VIEW.SIDE_BY_SIDE)
             zed.retrieve_measure(sl_depth, sl.MEASURE.DEPTH)
             cv_stereo_img = sl_stereo_img.get_data()[
@@ -186,19 +222,16 @@ def grab_images_realtime(cv_img_queue):
         else:
             break
 
-        cv_img_queue.put((cv_img_left, cv_depth))
+        cv_img_queue.put((cv_img_left, cv_depth, timestamp))
 
 
-def visualize(vis_queue):
+def visualize_path(vis_queue, gt_poses=None):
     from visualization import PangoVisualizer  # local import
 
-    vis = PangoVisualizer(title="Frontend Visualizer")
+    vis = PangoVisualizer(title="Path Visualizer")
     while True:
         poses, landmarks = vis_queue.get()
-        positions = [T[:3, 3] for T in poses]
-        orientations = [T[:3, :3] for T in poses]
-        vis.update(positions, orientations, landmarks[-1])
-        # vis.update(positions, orientations, landmarks)
+        vis.update(poses, landmarks[-1], gt_poses)
 
 
 def process_frontend(
@@ -207,19 +240,21 @@ def process_frontend(
     backend_frontend_queue,
     vis_queue,
     renderer_queue,
+    descriptors_queue,
     cx,
     cy,
     fx,
-    baseline,
+    baseline=1,  # not used if not using stereo images
+    initial_pose=np.eye(4),
 ):
 
     from frontend import VisualOdometry
 
-    vo = VisualOdometry(cx, cy, fx, baseline)
+    vo = VisualOdometry(cx, cy, fx, baseline, initial_pose)
     counter = 0
     while True:
-        cv_img_left, cv_depth = cv_img_queue.get()
-        T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
+        cv_img_left, cv_depth, timestamp = cv_img_queue.get()
+        T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth, timestamp=timestamp)
         counter += 1
 
         renderer_queue.put((cv_img_left, vo.poses[-1]))
@@ -241,6 +276,9 @@ def process_frontend(
         #     vo.poses = poses
         #     vo.landmarks_3d = landmarks_3d
 
+        kpts_t, desc_t = vo._compute_orb(cv_img_left)
+        descriptors_queue.put(desc_t)
+
         key = cv2.waitKey(1)
         if key == "q":
             break
@@ -260,6 +298,18 @@ def process_backend(frontend_backend_queue, backend_frontend_queue, cx, cy, fx):
     # latency = 1.0 / (curr - start)
     # print(f"Running at {latency} hz")
     # start = curr
+
+
+def loop_closure(descriptors_queue, loop_closure_queue):
+    from loop_closure import LoopClosure  # local import
+
+    lc = LoopClosure()
+    while True:
+        descriptors = descriptors_queue.get()
+        scores, max_idx = lc.query(descriptors)
+        if scores is not None:
+            print("Loop Closure Detected")
+            loop_closure_queue.put((scores, max_idx))
 
 
 if __name__ == "__main__":

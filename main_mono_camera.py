@@ -34,8 +34,7 @@ def main():
     vo = VisualOdometry(cx, cy, fx, baseline)
     vis = PangoVisualizer()
 
-    positions = []
-    orientations = []
+    poses = []
     curr_pose = None
     while capLeft.isOpened() and running:
         ret, cv_img_left = capLeft.read()
@@ -47,11 +46,9 @@ def main():
             else:
                 curr_pose = np.matmul(curr_pose, np.linalg.inv(T))
 
-            positions.append(curr_pose[:3, 3])
-            orientations.append(curr_pose[:3, :3])
+            poses.append(curr_pose)
 
-            vis.update(positions, orientations)
-
+            vis.update(poses)
 
             key = cv2.waitKey(1)
             if key == "q":
@@ -66,7 +63,6 @@ def main():
 
     capLeft.release()
     cv2.destroyAllWindows()
-
 
 
 if __name__ == "__main__":
