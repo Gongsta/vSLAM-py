@@ -67,6 +67,11 @@ class VisualOdometry:
         self.landmarks_2d_prev = [None]
         self.landmarks_2d = [None]  # List of landmarks at each time frame, in camera frame
         self.landmarks_3d = [None]  # List of landmarks at each time frame, in world frame
+
+        # Trying this out for better performance
+        self.GLOBAL_landmarks_2d = []
+        self.GLOBAL_landmarks_3d = []
+
         # Relative pose transforms at each time frame, pose is a 4x4 SE3 matrix
         self.poses = [np.eye(4)]  # length T
         self.poses[-1] = initial_pose
@@ -86,6 +91,10 @@ class VisualOdometry:
         self.Q = np.array(
             [[1, 0, 0, -cx], [0, 1, 0, -cy], [0, 0, 0, -fx], [0, 0, -1.0 / baseline, 0]]
         )
+
+        # --------- keyframe TODO ---------
+        self.keyframe_queue = []
+        self.keyframe_poses = [np.eye(4)]
 
     @staticmethod
     def _form_transf(R, t):
@@ -166,7 +175,7 @@ class VisualOdometry:
                     F2 = F2[mask.ravel() == 1]
                 # Decompose the Essential matrix into R and t
                 _, R, t, _ = cv2.recoverPose(E, F1, F2, cameraMatrix=self.K)
-                t_scaled = 0.01 * t
+                t_scaled = 0.02 * t
 
                 T = self._form_transf(R, np.squeeze(t_scaled))
                 print(T)
@@ -192,10 +201,23 @@ class VisualOdometry:
             T = np.linalg.inv(T)
             self.relative_poses.append(T)
             self.poses.append(self.poses[-1] @ self.relative_poses[-1])
+            # Keyframe solution
+            # # w_T_p = w_T_keyframe * keyframe_T_p
+            # self.poses.append(self.keyframe_poses[-1] @ self.relative_poses[-1])
+            # if len(self.poses) % 20 == 0:
+            #     self.keyframe_poses.append(self.poses[-1])
 
         else:
             # 3D-3D method
             raise NotImplementedError("3D-3D method not implemented")
+
+        if self.save_path:
+            with open("poses.txt", "a") as f:
+                pose = self.poses[-1]
+                position = pose[0:3, 3]
+                quaternion = Rotation.from_matrix(pose[0:3, 0:3]).as_quat()
+                pose_list = list(position) + list(quaternion)
+                f.write(f"{timestamp} {' '.join(map(str, pose_list))}\n")
 
         if method == VOMethod.VO_2D_2D:
             return T
@@ -217,25 +239,18 @@ class VisualOdometry:
 
         self.landmarks_3d.append(world_points_3d_t)
 
-        if self.save_path:
-            with open("poses.txt", "a") as f:
-                pose = self.poses[-1]
-                position = pose[0:3, 3]
-                quaternion = Rotation.from_matrix(pose[0:3, 0:3]).as_quat()
-                pose_list = list(position) + list(quaternion)
-                f.write(f"{timestamp} {' '.join(map(str, pose_list))}\n")
-
-        # if len(self.landmarks_3d) == 0:  # Create first set of 3d landmarks if not existent
-        #     self.landmarks_3d = list(world_points_3d_t)
-        #     self.landmarks_2d.append(
+        # # ---------- Local Mapping -----------
+        # if len(self.GLOBAL_landmarks_3d) == 0:  # Create first set of 3d landmarks if not existent
+        #     self.GLOBAL_landmarks_3d = list(world_points_3d_t)
+        #     self.GLOBAL_landmarks_2d.append(
         #         {tuple(kpt): i for i, kpt in enumerate(matched_kpts_t_1)}
         #     )  # time 0
-        #     self.landmarks_2d.append(
+        #     self.GLOBAL_landmarks_2d.append(
         #         {tuple(kpt): i for i, kpt in enumerate(matched_kpts_t)}
         #     )  # time 1
 
         # else:  # Track new points from previous, and update if new landmarks are detected
-        #     landmark_2d_t_1 = self.landmarks_2d[-1]
+        #     landmark_2d_t_1 = self.GLOBAL_landmarks_2d[-1]
         #     dic = {}
         #     for i, kpt in enumerate(matched_kpts_t_1):
         #         kpt = tuple(kpt)
@@ -243,26 +258,27 @@ class VisualOdometry:
         #             idx = landmark_2d_t_1[kpt]
         #         else:
         #             # Add new 3D landmark. Note that these new 3d landmarks might only be measured once
-        #             idx = len(self.landmarks_3d)
-        #             self.landmarks_3d.append(world_points_3d_t[i])
+        #             idx = len(self.GLOBAL_landmarks_3d)
+        #             self.GLOBAL_landmarks_3d.append(world_points_3d_t[i])
 
         #         dic[tuple(matched_kpts_t[i])] = idx
 
-        #     self.landmarks_2d.append(dic)
+        #     self.GLOBAL_landmarks_2d.append(dic)
 
         # # Run local mapping
-        # if len(self.poses) > 10:
+        # if len(self.poses) % 30 == 0:
+        #     print("local mapping")
         #     # do it only for the last 10 keyframes
         #     # self.poses[-10:], self.landmarks_3d = self.solve_better(
         #     #     self.poses[-10:], self.landmarks_2d[-10:], self.landmarks_3d
         #     # )
-        #     self.poses, self.landmarks_3d = self.solve_better(
-        #         self.poses, self.landmarks_2d, self.landmarks_3d
+        #     self.poses, self.GLOBAL_landmarks_3d = self.solve_better(
+        #         self.poses, self.GLOBAL_landmarks_2d, self.GLOBAL_landmarks_3d
         #     )
 
         return T
 
-    def solve_better(self, poses, landmarks_2d, landmarks_3d, num_iterations=30):
+    def solve_better(self, poses, landmarks_2d, landmarks_3d, num_iterations=10):
         """
         Optimize poses and points in the local window. Visual odometry suffers from lots of drift, so we need to do local bundle adjusment.
 
@@ -277,6 +293,10 @@ class VisualOdometry:
         """
 
         # ----------- Bundle Adjustment -----------
+        print(
+            f"Running Bundle Adjustment with {len(poses)} poses and {len(landmarks_3d)} landmarks"
+        )
+
         optimizer = g2o.SparseOptimizer()
         solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
         solver = g2o.OptimizationAlgorithmLevenberg(solver)
@@ -541,12 +561,27 @@ class VisualOdometry:
             matches = []
 
         good_matches = []
+        THRESHOLD = 0.7
         try:
             for m, n in matches:
-                if m.distance < 0.8 * n.distance:
+                if m.distance < THRESHOLD * n.distance:
                     good_matches.append(m)
         except ValueError:
             pass
+
+        FILTER = True
+        if FILTER:
+            good_matches.sort(key=lambda x: x.distance)
+            good_matches = good_matches[:1600] # filter out
+
+        print("length of matches BEFORE filtering", len(good_matches))
+        # Find the homography matrix using RANSAC
+        src_pts = np.float32([kpts_t_1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        dst_pts = np.float32([kpts_t[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        # Use the mask to select inlier matches
+        good_matches = [m for m, msk in zip(good_matches, mask) if msk[0] == 1]
+        print("length of matches AFTER filtering", len(good_matches))
 
         for match in good_matches:
             matched_kpts_t_1.append(kpts_t_1[match.queryIdx].pt)
@@ -558,9 +593,7 @@ class VisualOdometry:
             if CUDA:
                 img_t_1 = img_t_1.download()
                 img_t = img_t.download()
-            output_image = cv2.drawMatches(
-                img_t_1, kpts_t_1, img_t, kpts_t, good_matches[:30], None
-            )
+            output_image = cv2.drawMatches(img_t_1, kpts_t_1, img_t, kpts_t, good_matches, None)
             cv2.imshow("Tracked ORB", output_image)
         return np.array(matched_kpts_t_1), np.array(matched_kpts_t)
 

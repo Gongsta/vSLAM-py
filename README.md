@@ -69,8 +69,49 @@ The goal is to incrementally improve this SLAM system, while minimizing complexi
 I will be benchmarking against the [fr1/desk]() dataset.
 
 
-2024-05-22: Realized that I had my transforms inverted... slightly better results!
+2024-05-24: Trying to use keyframes and local mapping.
 
+2024-05-23:  I was not strict with filtering bad matches between frames. Trying a few configurations, and `cv2.findHomography` to filter out outliers. Thanks Kj! Found best one to be 0.7 lowe's ratio threshold and cv2.findHomography to filter out outliers.
+improvement to ~0.14 RMSE!
+
+Filtering out the matches, taking only the top matches also helps a lot with computation time. I am taking **filtering top 800 matches, 0.7 lowe's ratio threshold, and cv2.findHomography outlier rejection** as the best configuration.
+
+Some results below (*note: measurements are flaky, sometimes I get better results with more matches, sometimes with less*):
+
+No filtering, no cv2.findHomography:
+- 0.8 lowe's ratio threshold - 0.918237 m RMSE
+- 0.7 lowe's ratio threshold - 0.161828 m RMSE
+- 0.5 lowe's ratio threshold - 0.160740 m RMSE
+
+We can see that being strict with bad matches really helps. Huge jump from 0.8 to 0.7 threshold.
+
+0.7 lowe's ratio threshold, with cv2.findHomography outlier rejection:
+- top 100 matches - 0.290785 m RMSE
+- top 200 matches - 0.222357 m RMSE
+- top 400 matches - 0.172895 m RMSE
+- top 800 matches - 0.149658 m RMSE
+- top 1000 matches - 0.143917 m RMSE
+- top 1600 matches - 0.137692 m RMSE
+- No filtering top matches - 0.139491 m m RMSE
+
+Filtering helps a little bit! But doesn't make computation faster.
+
+
+![2024-05-23](results/2024-05-23.png)
+
+```
+compared_pose_pairs 570 pairs
+absolute_translational_error.rmse 0.142910 m
+absolute_translational_error.mean 0.139057 m
+absolute_translational_error.median 0.137050 m
+absolute_translational_error.std 0.032960 m
+absolute_translational_error.min 0.067943 m
+absolute_translational_error.max 0.214920 m
+```
+
+
+
+2024-05-22: Realized that I had my transforms inverted... slightly better results!
 
 Before
 ```python
@@ -96,7 +137,7 @@ absolute_translational_error.min 0.217567 m
 absolute_translational_error.max 1.714041 m
 ```
 
-!Also, [2024-05-22](results/2024-05-22.png)
+![2024-05-22](results/2024-05-22.png)
 
 
 2024-05-21: Added the dataset. Initial results. Ew...

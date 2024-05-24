@@ -1,3 +1,8 @@
+poses.txt
+debug.txt
+.DS_Store
+rgbd_dataset_*.zip
+rgbd_dataset_*/
 sample_zed/
 dataset/
 # Byte-compiled / optimized / DLL files

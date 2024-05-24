@@ -28,6 +28,8 @@ def main():
     )  # Required to get Zed and Pangolin working in different processes
 
     # --------- Download Dataset ---------
+    # dataset_name = "rgbd_dataset_freiburg1_xyz" # for debugging
+    # dataset_name = "rgbd_dataset_freiburg1_rpy" # for debugging
     dataset_name = "rgbd_dataset_freiburg1_desk"
     if not os.path.exists(dataset_name):
         path_to_zip_file = f"{dataset_name}.zip"
