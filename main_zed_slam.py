@@ -282,8 +282,8 @@ def process_frontend(
         #     vo.poses = poses
         #     vo.landmarks_3d = landmarks_3d
 
-        kpts_t, desc_t = vo._compute_orb(cv_img_left)
-        descriptors_queue.put(desc_t)
+        kpts_t, descs_t = vo._compute_orb(cv_img_left)
+        descriptors_queue.put(descs_t)
 
         key = cv2.waitKey(1)
         if key == "q":

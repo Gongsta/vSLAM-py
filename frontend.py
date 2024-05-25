@@ -16,6 +16,7 @@ else:
 
 np.random.seed(0)
 
+
 class VOMethod(Enum):
     """
     There are several methods to calculate camera motion:
@@ -446,21 +447,21 @@ class VisualOdometry:
         Returns
         -------
         kpts_t (tuple): Keypoints at time t
-        desc_t (ndarray): Descriptors at time t
+        descs_t (ndarray): Descriptors at time t
         """
         if CUDA:
-            kpts_t, desc_t = self.orb.detectAndComputeAsync(img_t, None)
+            kpts_t, descs_t = self.orb.detectAndComputeAsync(img_t, None)
 
             # Convert back into CPU
             if kpts_t.step == 0:
                 print("Failed to process frame, No ORB keypoints found")
                 return [], []
             kpts_t = self.orb.convert(kpts_t)
-            desc_t = desc_t.download()
+            descs_t = descs_t.download()
         else:
-            kpts_t, desc_t = self.orb.detectAndCompute(img_t, None)
+            kpts_t, descs_t = self.orb.detectAndCompute(img_t, None)
 
-        return kpts_t, desc_t
+        return kpts_t, descs_t
 
     def _convert_grayscale(self, img):
         if CUDA:
@@ -487,11 +488,11 @@ class VisualOdometry:
         matched_kpts_t (ndarray): Matched keypoints at time t
         """
         # ---------- Compute ORB Keypoints and Descriptors ----------
-        kpts_t_1, desc_t_1 = self._compute_orb(img_t_1)
-        kpts_t, desc_t = self._compute_orb(img_t)
+        kpts_t_1, descs_t_1 = self._compute_orb(img_t_1)
+        kpts_t, descs_t = self._compute_orb(img_t)
 
         # ---------- Match Descriptors Across 2 frames ----------
-        matched_kpts_t_1, matched_kpts_t = self._match_2d_kpts(kpts_t_1, kpts_t, desc_t_1, desc_t)
+        matched_kpts_t_1, matched_kpts_t = self._match_2d_kpts(kpts_t_1, kpts_t, descs_t_1, descs_t)
 
         return matched_kpts_t_1, matched_kpts_t
 
@@ -535,7 +536,7 @@ class VisualOdometry:
 
         cv2.imshow("Depth", depth_viz)
 
-    def _match_2d_kpts(self, kpts_t_1, kpts_t, desc_t_1, desc_t):
+    def _match_2d_kpts(self, kpts_t_1, kpts_t, descs_t_1, descs_t):
         """
         Match 2D keypoints across two frames using descriptors.
 
@@ -543,8 +544,8 @@ class VisualOdometry:
         ----------
         kpts_t_1 (list of cv2.KeyPoint): Keypoints at time t-1
         kpts_t (list of cv2.KeyPoint): Keypoints at time t
-        desc_t_1 (ndarray): Descriptors at time t-1
-        desc_t (ndarray): Descriptors at time t
+        descs_t_1 (ndarray): Descriptors at time t-1
+        descs_t (ndarray): Descriptors at time t
 
         Returns
         -------
@@ -556,7 +557,7 @@ class VisualOdometry:
 
         # FLANN based matcher
         try:
-            matches = self.flann.knnMatch(desc_t_1, desc_t, k=2)
+            matches = self.flann.knnMatch(descs_t_1, descs_t, k=2)
         except:
             matches = []
 
@@ -572,7 +573,7 @@ class VisualOdometry:
         FILTER = True
         if FILTER:
             good_matches.sort(key=lambda x: x.distance)
-            good_matches = good_matches[:1600] # filter out
+            good_matches = good_matches[:800]  # filter out
 
         print("length of matches BEFORE filtering", len(good_matches))
         # Find the homography matrix using RANSAC
