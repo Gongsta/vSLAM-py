@@ -74,8 +74,7 @@ class VisualOdometry:
         self.GLOBAL_landmarks_3d = []
 
         # Relative pose transforms at each time frame, pose is a 4x4 SE3 matrix
-        self.poses = [np.eye(4)]  # length T
-        self.poses[-1] = initial_pose
+        self.poses = [initial_pose]  # length T
         self.relative_poses = []  # length T-1, since relative
 
         # TODO: Need an API redesign, since I want to track features over a window, instead of only consecutive time frames. Also, I want to visualize the pose in real-time
@@ -114,7 +113,6 @@ class VisualOdometry:
         T = np.eye(4, dtype=np.float64)
         T[:3, :3] = R
         T[:3, 3] = t
-        T = np.linalg.inv(T)
         return T
 
     def process_frame(
@@ -179,7 +177,8 @@ class VisualOdometry:
                 t_scaled = 0.02 * t
 
                 T = self._form_transf(R, np.squeeze(t_scaled))
-                print(T)
+                # old_T_new
+                T = np.linalg.inv(T)
                 self.relative_poses.append(T)
                 # w_T_k_new = w_T_k_old * k_old_T_k_new
                 self.poses.append(self.poses[-1] @ self.relative_poses[-1])
@@ -199,7 +198,6 @@ class VisualOdometry:
             )
 
             T = self._minimize_reprojection_error(matched_kpts_t, points_3d_t_1)
-            T = np.linalg.inv(T)
             self.relative_poses.append(T)
             self.poses.append(self.poses[-1] @ self.relative_poses[-1])
             # Keyframe solution
@@ -366,6 +364,7 @@ class VisualOdometry:
         """
         Refer to SLAM textbook for formulation. Solved with g2o.
         """
+        assert len(points_2d) == len(points_3d)
         optimizer = g2o.SparseOptimizer()
         solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
         solver = g2o.OptimizationAlgorithmLevenberg(solver)
@@ -404,6 +403,8 @@ class VisualOdometry:
         optimizer.optimize(10)
 
         T = vertex_pose.estimate().to_homogeneous_matrix()
+        # old_T_new
+        T = np.linalg.inv(T)
         return T
 
     def _drop_invalid_points(self, points_3d, points_2d, points_2d_prev=None):
@@ -446,7 +447,7 @@ class VisualOdometry:
 
         Returns
         -------
-        kpts_t (tuple): Keypoints at time t
+        kpts_t (tuple of cv2.Keypoint): Keypoints at time t
         descs_t (ndarray): Descriptors at time t
         """
         if CUDA:
@@ -570,7 +571,7 @@ class VisualOdometry:
         except ValueError:
             pass
 
-        FILTER = True
+        FILTER = False
         if FILTER:
             good_matches.sort(key=lambda x: x.distance)
             good_matches = good_matches[:800]  # filter out
