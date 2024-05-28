@@ -14,6 +14,13 @@ Sources of inspiration:
 - ORB-SLAM1, ORB-SLAM2, and DSO papers
 - https://github.com/niconielsen32/ComputerVision
 
+Currently sitting at ~0.14m translation error on the TUM-RGBD dataset (more info below). 
+
+ORB Feature matching with outlier filtering
+https://github.com/Gongsta/vSLAM-py/assets/43485866/bce0e57a-f1f3-4884-9f21-6a380c26c41d
+
+Estimated pose
+https://github.com/Gongsta/vSLAM-py/assets/43485866/c2b480d6-602a-4cfd-aa77-9517ad226a33
 
 ## Installation
 Getting started is super straightforward.
