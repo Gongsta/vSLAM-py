@@ -1,30 +1,30 @@
 # vSLAM-py
-A lightweight implementation of real-time Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++ (too tedious to write in, abandoned after writing the frontend).
+A lightweight implementation of real-time Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to debug, and abandoned after writing basic visual odometry code.
 
 Uses the following libraries (installed through `pip`):
-- NumPy (for basic linear algebra)
 - OpenCV (for feature detection / matching)
-- g2o-python (for pose-graph optimization)
+- g2o-python (for graph optimization)
 - Pangolin (for real-time visualization)
     - Note: Pangolin is not available on PyPI, though I'm [pushing for it](https://github.com/stevenlovegrove/Pangolin/issues/925)
-- Matplotlib (for basic plotting, to remove)
 
 
 Sources of inspiration:
+- [slambook-en](https://github.com/gaoxiang12/slambook-en/blob/master/slambook-en.pdf) (BEST textbook to learn visual SLAM)
 - [pyslam](https://github.com/luigifreda/pyslam/tree/master)
 - [twitchslam](https://github.com/geohot/twitchslam/blob/master/slam.py)
+- ORB-SLAM1, ORB-SLAM2, and DSO papers
 - https://github.com/niconielsen32/ComputerVision
 
 
 ## Installation
 Getting started is super straightforward.
 
-(Recommended, but not required) Create a virtual environment with Conda to not pollute your Python workspace:
+(*Recommended, but not required*) Create a virtual environment with Conda to not pollute your Python workspace:
 ```
 conda create -n vslam-py python=3.8
 ```
 
-Then, install the python libraries
+Then, install the Python libraries
 ```
 pip install -r requirements.txt
 ```
@@ -40,6 +40,21 @@ Run the stereo camera:
 ```
 python3 main_stereo_camera.py
 ```
+
+Run on the TUM dataset if you don't have a camera:
+```python
+python3 main_tum.py
+```
+
+## Important assumptions with your own cameras
+Timestamps should be filled in correctly (default is incrementing by 0.1s). This is important for the optimization to work correctly.
+
+For depth cameras
+- Unknown depth values are expected to be populated with `np.NaN` (not 0). This is important for the optimization to work correctly
+
+## Terminology
+- Feature: A point in the image that can be tracked over time
+- Landmarks / Map points: 3D points in the world of features that are detected by the camera
 
 ## Discussions
 
@@ -61,7 +76,7 @@ However, monocular SLAM is more accessible, and everyone can just try it on thei
 03-20-2024: Initial commit for python. Project started in C++, but I transitioned to Python for ease of development.
 04-29-2024: Add working frontend for visual odometry.
 05-12-204: Add bundle adjustment.
-05-21-2024: Add benchmarking to track improvements in data (finally...).
+05-21-2024: Add benchmarking with TUM-RGBD dataset to track improvements in data (finally...).
 
 ### Benchmark
 The goal is to incrementally improve this SLAM system, while minimizing complexity, and guaranteeing real-time performance.
@@ -69,12 +84,17 @@ The goal is to incrementally improve this SLAM system, while minimizing complexi
 I will be benchmarking against the [fr1/desk]() dataset.
 
 
-2024-05-24: Trying to use keyframes and local mapping.
+2024-05-24 to 2024-05-28: Trying to use keyframes and local mapping, based on ideas from PTAM and ORB-SLAM. God this isn't that hard theoretically, but painfully tedious to implement.
+
+Use dbow, a bag of words library with pretrained images from the TUM dataset. This will be used to match the current frame to the keyframes. If the current frame is not matched to any keyframes, it will be added as a new keyframe.
+
+This doesn't work well...sunk cost fallacy. I think I should stop here. I should have stopped at 14cm RMSE.
+
 
 2024-05-23:  I was not strict with filtering bad matches between frames. Trying a few configurations, and `cv2.findHomography` to filter out outliers. Thanks Kj! Found best one to be 0.7 lowe's ratio threshold and cv2.findHomography to filter out outliers.
-improvement to ~0.14 RMSE!
+improvement to **~0.14m** RMSE!
 
-Filtering out the matches, taking only the top matches also helps a lot with computation time. I am taking **filtering top 800 matches, 0.7 lowe's ratio threshold, and cv2.findHomography outlier rejection** as the best configuration.
+Filtering out the matches, taking only the top matches also helps a lot with computation time. I am taking **no filtering, 0.7 lowe's ratio threshold, and cv2.findHomography outlier rejection** as the best configuration.
 
 Some results below (*note: measurements are flaky, sometimes I get better results with more matches, sometimes with less*):
 
@@ -92,9 +112,9 @@ We can see that being strict with bad matches really helps. Huge jump from 0.8 t
 - top 800 matches - 0.149658 m RMSE
 - top 1000 matches - 0.143917 m RMSE
 - top 1600 matches - 0.137692 m RMSE
-- No filtering top matches - 0.139491 m m RMSE
+- No filtering top matches - **0.139491** m m RMSE
 
-Filtering helps a little bit! But doesn't make computation faster.
+In general, the less we filter the better the results. This seems consisten with the paper [Real-time monocular SLAM: Why filter?](https://ieeexplore.ieee.org/document/5509636).
 
 
 ![2024-05-23](results/2024-05-23.png)

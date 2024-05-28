@@ -1,5 +1,5 @@
 import numpy as np
-import os
+import os, tarfile
 import cv2
 import urllib.request
 import math
@@ -15,6 +15,13 @@ def download_file(url, save_path):
                 file.write(content)
     except urllib.error.URLError as e:
         print(f"Failed to download {url}. Reason: {str(e)}")
+
+def extract(tar_url, extract_path="."):
+    tar = tarfile.open(tar_url, "r")
+    for item in tar:
+        tar.extract(item, extract_path)
+        if item.name.find(".tgz") != -1 or item.name.find(".tar") != -1:
+            extract(item.name, "./" + item.name[: item.name.rfind("/")])
 
 
 def _compute_absolute_poses(self, relative_poses, include_initial=True):

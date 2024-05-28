@@ -1,5 +1,4 @@
 import os
-import os, tarfile
 import multiprocessing as mp
 import numpy as np
 from scipy.spatial.transform import Rotation as R
@@ -7,18 +6,10 @@ from scipy.spatial.transform import Rotation as R
 np.random.seed(0)
 
 
-def extract(tar_url, extract_path="."):
-    tar = tarfile.open(tar_url, "r")
-    for item in tar:
-        tar.extract(item, extract_path)
-        if item.name.find(".tgz") != -1 or item.name.find(".tar") != -1:
-            extract(item.name, "./" + item.name[: item.name.rfind("/")])
-
-
 import cv2
 
 
-from utils import download_file
+from utils import download_file, extract
 from eval.associate import read_file_list, associate
 
 
@@ -31,10 +22,11 @@ def main():
     # dataset_name = "rgbd_dataset_freiburg1_xyz" # for debugging
     # dataset_name = "rgbd_dataset_freiburg1_rpy" # for debugging
     dataset_name = "rgbd_dataset_freiburg1_desk"
+    # dataset_name = "rgbd_dataset_freiburg3_long_office_household" # big dataset
     if not os.path.exists(dataset_name):
         path_to_zip_file = f"{dataset_name}.zip"
         download_file(
-            f"https://cvg.cit.tum.de/rgbd/dataset/freiburg1/{dataset_name}.tgz",
+            f"https://cvg.cit.tum.de/rgbd/dataset/freiburg{dataset_name[21]}/{dataset_name}.tgz",
             path_to_zip_file,
         )
         extract(path_to_zip_file)
@@ -109,11 +101,24 @@ def main():
     # frontend -> visualizer
     vis_queue = mp.Queue()
 
+    # Create a Manager object to manage shared state
+    manager = mp.Manager()
+    shared_data = manager.dict()
+    shared_data["new_keyframe"] = []
+    shared_data["keyframes"] = []
+    shared_data["map_points"] = []
+    shared_data["lock"] = manager.Lock()
+
+    # Events
+    new_keyframe_event = mp.Event()
+    map_done_optimization_event = mp.Event()
+
+
     # --------- Processes ---------
     from main_zed_slam import (
         grab_rgbd_images_sim,
         process_frontend,
-        mock_process_frontend,
+        process_tracking,
         process_backend,
         render,
         visualize_path,
@@ -133,8 +138,6 @@ def main():
         target=process_frontend,
         args=(
             cv_img_queue,
-            frontend_backend_queue,
-            backend_frontend_queue,
             vis_queue,
             renderer_queue,
             descriptors_queue,
@@ -145,26 +148,39 @@ def main():
             initial_pose,
         ),
     )
-    # frontend_proc = mp.Process(
-    #     target=mock_process_frontend,
-    #     args=(
-    #         cv_img_queue,
-    #         gt_poses,
-    #         vis_queue,
-    #         renderer_queue,
-    #     ),
-    # )
+
+
+    tracking_proc = mp.Process(
+        target=process_tracking,
+        args=(
+            cv_img_queue,
+            new_keyframe_event,
+            map_done_optimization_event,
+            shared_data,
+            vis_queue,
+            renderer_queue,
+            descriptors_queue,
+            cx,
+            cy,
+            fx,
+            1,
+            initial_pose,
+        ),
+    )
 
     backend_proc = mp.Process(
-        target=process_backend, args=(frontend_backend_queue, backend_frontend_queue, cx, cy, fx)
+        target=process_backend,
+        args=(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx),
     )
+
 
     path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue, gt_poses))
 
     image_grabber.start()
-    frontend_proc.start()
+    # frontend_proc.start()
+    tracking_proc.start()
 
-    FAST = True
+    FAST = False
     if not FAST:
         path_visualizer_proc.start()
         renderer_proc.start()
@@ -172,7 +188,8 @@ def main():
     # backend_proc.start()
 
     image_grabber.join()
-    frontend_proc.join()
+    # frontend_proc.join()
+    tracking_proc.join()
     if not FAST:
         path_visualizer_proc.join()
         renderer_proc.join()

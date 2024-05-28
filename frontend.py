@@ -537,6 +537,45 @@ class VisualOdometry:
 
         cv2.imshow("Depth", depth_viz)
 
+    def _get_matches(
+        self, kpts_t_1, kpts_t, descs_t_1, descs_t, ratio_threshold=0.7, distance_threshold=50.0
+    ):
+        # FLANN based matcher
+        try:
+            matches = self.flann.knnMatch(descs_t_1, descs_t, k=2)
+        except:
+            matches = []
+
+        good_matches = []
+        try:
+            for m, n in matches:
+                if m.distance < ratio_threshold * n.distance and m.distance < distance_threshold:
+                    good_matches.append(m)
+        except ValueError:
+            pass
+
+        FILTER = False
+        if FILTER:
+            good_matches.sort(key=lambda x: x.distance)
+            good_matches = good_matches[:800]  # filter out
+
+        print("length of matches BEFORE filtering", len(good_matches))
+        if len(good_matches) < 4:
+            return good_matches
+        # Find the homography matrix using RANSAC, needs at least 4 points
+        if type(kpts_t_1[0]) == cv2.KeyPoint:
+            src_pts = np.float32([kpts_t_1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kpts_t[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
+        else:
+            src_pts = np.float32([kpts_t_1[m.queryIdx] for m in good_matches]).reshape(-1, 1, 2)
+            dst_pts = np.float32([kpts_t[m.trainIdx] for m in good_matches]).reshape(-1, 1, 2)
+
+        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+        # Use the mask to select inlier matches
+        good_matches = [m for m, msk in zip(good_matches, mask) if msk[0] == 1]
+        print("length of matches AFTER filtering", len(good_matches))
+        return good_matches
+
     def _match_2d_kpts(self, kpts_t_1, kpts_t, descs_t_1, descs_t):
         """
         Match 2D keypoints across two frames using descriptors.
@@ -556,34 +595,7 @@ class VisualOdometry:
         matched_kpts_t_1 = []
         matched_kpts_t = []
 
-        # FLANN based matcher
-        try:
-            matches = self.flann.knnMatch(descs_t_1, descs_t, k=2)
-        except:
-            matches = []
-
-        good_matches = []
-        THRESHOLD = 0.7
-        try:
-            for m, n in matches:
-                if m.distance < THRESHOLD * n.distance:
-                    good_matches.append(m)
-        except ValueError:
-            pass
-
-        FILTER = False
-        if FILTER:
-            good_matches.sort(key=lambda x: x.distance)
-            good_matches = good_matches[:800]  # filter out
-
-        print("length of matches BEFORE filtering", len(good_matches))
-        # Find the homography matrix using RANSAC
-        src_pts = np.float32([kpts_t_1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        dst_pts = np.float32([kpts_t[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-        H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-        # Use the mask to select inlier matches
-        good_matches = [m for m, msk in zip(good_matches, mask) if msk[0] == 1]
-        print("length of matches AFTER filtering", len(good_matches))
+        good_matches = self._get_matches(kpts_t_1, kpts_t, descs_t_1, descs_t)
 
         for match in good_matches:
             matched_kpts_t_1.append(kpts_t_1[match.queryIdx].pt)

@@ -76,8 +76,6 @@ def main():
     cv_img_queue = mp.Queue()
     # frontend -> renderer
     renderer_queue = mp.Queue()
-    frontend_backend_queue = mp.Queue()
-    backend_frontend_queue = mp.Queue()
 
     # frontend -> loop_closure
     descriptors_queue = mp.Queue()
@@ -85,6 +83,18 @@ def main():
     loop_closure_queue = mp.Queue()
     # frontend -> visualizer
     vis_queue = mp.Queue()
+
+    # Create a Manager object to manage shared state
+    manager = mp.Manager()
+    shared_data = manager.dict()
+    shared_data["new_keyframe"] = []
+    shared_data["keyframes"] = []
+    shared_data["map_points"] = []
+    shared_data["lock"] = manager.Lock()
+
+    # Events
+    new_keyframe_event = mp.Event()
+    map_done_optimization_event = mp.Event()
 
     # --------- Processes ---------
     if USE_SIM:
@@ -107,8 +117,6 @@ def main():
         target=process_frontend,
         args=(
             cv_img_queue,
-            frontend_backend_queue,
-            backend_frontend_queue,
             vis_queue,
             renderer_queue,
             descriptors_queue,
@@ -118,8 +126,27 @@ def main():
             baseline,
         ),
     )
+
+    tracking_proc = mp.Process(
+        target=process_tracking,
+        args=(
+            cv_img_queue,
+            new_keyframe_event,
+            map_done_optimization_event,
+            shared_data,
+            vis_queue,
+            renderer_queue,
+            descriptors_queue,
+            cx,
+            cy,
+            fx,
+            baseline,
+        ),
+    )
+
     backend_proc = mp.Process(
-        target=process_backend, args=(frontend_backend_queue, backend_frontend_queue, cx, cy, fx)
+        target=process_backend,
+        args=(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx),
     )
 
     path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue,))
@@ -231,13 +258,12 @@ def visualize_path(vis_queue, gt_poses=None):
     vis = PangoVisualizer(title="Path Visualizer")
     while True:
         poses, landmarks = vis_queue.get()
-        vis.update(poses, landmarks[-1], gt_poses[: len(poses)])
+        # vis.update(poses, landmarks, gt_poses[: len(poses)])
+        vis.update(poses, landmarks, gt_poses)
 
 
 def process_frontend(
     cv_img_queue,
-    frontend_backend_queue,
-    backend_frontend_queue,
     vis_queue,
     renderer_queue,
     descriptors_queue,
@@ -263,17 +289,70 @@ def process_frontend(
         )
         counter += 1
 
-        renderer_queue.put((cv_img_left, vo.poses[-1]))
-        vis_queue.put((vo.poses.copy(), vo.landmarks_3d.copy()))
+        if counter > 1:
+            renderer_queue.put((cv_img_left, vo.poses[-1]))
+            vis_queue.put((vo.poses.copy(), vo.landmarks_3d[-1].copy()))
 
-        if counter % 50 == 0:  # Run backend every 50 frames
-            frontend_backend_queue.put(
-                (
-                    vo.poses.copy(),
-                    vo.landmarks_2d.copy(),
-                    vo.landmarks_3d.copy(),
-                )
-            )
+        key = cv2.waitKey(1)
+        if key == "q":
+            break
+
+
+def process_tracking(
+    cv_img_queue,
+    new_keyframe_event,
+    map_done_optimization_event,
+    shared_data,
+    vis_queue,
+    renderer_queue,
+    descriptors_queue,
+    cx,
+    cy,
+    fx,
+    baseline=1,  # not used if not using stereo images
+    initial_pose=np.eye(4),
+):
+
+    from tracking import Tracking
+
+    tracker = Tracking(cx, cy, fx, baseline, initial_pose)
+    counter = 0
+    while True:
+        cv_img_left, cv_depth, timestamp = cv_img_queue.get()
+        tracker.track(
+            cv_img_left,
+            cv_depth,
+            timestamp,
+        )
+        counter += 1
+
+        if tracker.new_keyframe_event:  # multiprocessing enabled
+            with shared_data["lock"]:
+                shared_data["new_keyframe"] = tracker.new_keyframe
+            new_keyframe_event.set()  # notify backend
+            tracker.new_keyframe_event = False
+
+        # Check if map optimization is done
+        if map_done_optimization_event.is_set():
+            # Access updated map
+            with shared_data["lock"]:
+                tracker.synchronize(shared_data["keyframes"], shared_data["map_points"])
+            map_done_optimization_event.clear()
+
+        renderer_queue.put((cv_img_left, tracker.frames[-1].pose))
+        map_points = [pt.position for pt in tracker.map_points]
+        # poses = [frame.pose for frame in tracker.frames]
+        poses = [frame.pose for frame in tracker.keyframes]
+        vis_queue.put((poses, map_points))
+
+        # if counter % 50 == 0:  # Run backend every 50 frames
+        #     frontend_backend_queue.put(
+        #         (
+        #             vo.poses.copy(),
+        #             vo.landmarks_2d.copy(),
+        #             vo.landmarks_3d.copy(),
+        #         )
+        #     )
 
         # backend might be using an older version of the poses and landmarks, since backend is non-blocking
         # BAD: Using the empty() function is unreliable
@@ -282,37 +361,33 @@ def process_frontend(
         #     vo.poses = poses
         #     vo.landmarks_3d = landmarks_3d
 
-        kpts_t, descs_t = vo._compute_orb(cv_img_left)
-        descriptors_queue.put(descs_t)
+        # kpts_t, descs_t = vo._compute_orb(cv_img_left)
+        # descriptors_queue.put(descs_t)
 
         key = cv2.waitKey(1)
         if key == "q":
             break
 
 
-def mock_process_frontend(
-    cv_img_queue,
-    gt_poses,
-    vis_queue,
-    renderer_queue,
-):
-    counter = 0
+def process_backend(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx):
+    from tracking import Map
+
+    map = Map(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx)
     while True:
-        cv_img_left, cv_depth, timestamp = cv_img_queue.get()
-        renderer_queue.put((cv_img_left, gt_poses[counter]))
-        vis_queue.put((gt_poses[: counter + 1].copy(), [None]))
-        counter += 1
+        if new_keyframe_event.is_set():
+            with shared_data["lock"]:
+                new_keyframe = shared_data["new_keyframe"]
+                shared_data["new_keyframe"] = []
 
+            new_keyframe_event.clear()
+            map.add_keyframe(new_keyframe)
 
-def process_backend(frontend_backend_queue, backend_frontend_queue, cx, cy, fx):
-    from backend import BundleAdjustment  # local import
-
-    backend = BundleAdjustment(cx, cy, fx)
-    while True:
-        poses, landmarks_2d, landmarks_3d = frontend_backend_queue.get()
-        print("backend", len(poses))
-        # poses, landmarks_3d = backend.solve(poses, landmarks_2d, landmarks_3d)
-        # backend_frontend_queue.put((poses, landmarks_3d))
+            # --------- Bundle Adjustment ---------
+            map.optimize()
+            with shared_data["lock"]:
+                shared_data["keyframes"] = map.keyframes  # optimized keyframes
+                shared_data["map_points"] = map.map_points  # optimized landmarks
+            map_done_optimization_event.set()
 
     # curr = time.time()
     # latency = 1.0 / (curr - start)
