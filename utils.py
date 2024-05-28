@@ -1,9 +1,6 @@
 import numpy as np
-import os
-import cv2
 import urllib.request
 import math
-
 
 def download_file(url, save_path):
     """Download a file from a URL and save it locally using urllib.request."""
