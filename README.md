@@ -1,4 +1,4 @@
-# vSLAM-py
+# vSLAM-py (WORK-IN-PROGRESS)
 A lightweight implementation of real-time Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to debug, and abandoned after writing basic visual odometry code.
 
 Uses the following libraries (installed through `pip`):
@@ -6,7 +6,6 @@ Uses the following libraries (installed through `pip`):
 - g2o-python (for graph optimization)
 - Pangolin (for real-time visualization)
     - Note: Pangolin is not available on PyPI, though I'm [pushing for it](https://github.com/stevenlovegrove/Pangolin/issues/925)
-
 
 Sources of inspiration:
 - [slambook-en](https://github.com/gaoxiang12/slambook-en/blob/master/slambook-en.pdf) (BEST textbook to learn visual SLAM)
@@ -29,9 +28,11 @@ Then, install the Python libraries
 pip install -r requirements.txt
 ```
 
+Note that you will have to install pyPangolin yourself at the moment.
+
 ## Usage
 
-Run the monocular camera visual odometry:
+Run the monocular camera visual odometry, which uses epipolar geometry to estimate the camera pose:
 ```
 python3 main_mono_camera.py
 ```
