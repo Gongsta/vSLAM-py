@@ -17,10 +17,17 @@ Sources of inspiration:
 Currently sitting at ~0.14m translation error on the TUM-RGBD dataset (more info below). 
 
 ORB Feature matching with outlier filtering
-https://github.com/Gongsta/vSLAM-py/assets/43485866/bce0e57a-f1f3-4884-9f21-6a380c26c41d
 
-Estimated pose
-https://github.com/Gongsta/vSLAM-py/assets/43485866/c2b480d6-602a-4cfd-aa77-9517ad226a33
+
+https://github.com/Gongsta/vSLAM-py/assets/43485866/7ac61970-2fe6-49ab-87ab-c60c1bffcb5d
+
+
+Estimated pose (green is ground truth pose, red is estimated pose)
+
+
+https://github.com/Gongsta/vSLAM-py/assets/43485866/3dedd824-2fb5-40e5-9052-7f81aa0a1e1e
+
+
 
 ## Installation
 Getting started is super straightforward.
