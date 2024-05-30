@@ -536,9 +536,17 @@ class VisualOdometry:
             )
 
         cv2.imshow("Depth", depth_viz)
+        cv2.imwrite(f"depth/{len(self.poses)}.png", depth_viz)
 
     def _get_matches(
-        self, kpts_t_1, kpts_t, descs_t_1, descs_t, ratio_threshold=0.7, distance_threshold=50.0
+        self,
+        kpts_t_1,
+        kpts_t,
+        descs_t_1,
+        descs_t,
+        ratio_threshold=0.7,
+        distance_threshold=50.0,
+        use_homography=True,
     ):
         # FLANN based matcher
         try:
@@ -554,13 +562,8 @@ class VisualOdometry:
         except ValueError:
             pass
 
-        FILTER = False
-        if FILTER:
-            good_matches.sort(key=lambda x: x.distance)
-            good_matches = good_matches[:800]  # filter out
-
         print("length of matches BEFORE filtering", len(good_matches))
-        if len(good_matches) < 4:
+        if len(good_matches) < 4 or not use_homography:
             return good_matches
         # Find the homography matrix using RANSAC, needs at least 4 points
         if type(kpts_t_1[0]) == cv2.KeyPoint:
@@ -607,8 +610,11 @@ class VisualOdometry:
             if CUDA:
                 img_t_1 = img_t_1.download()
                 img_t = img_t.download()
-            output_image = cv2.drawMatches(img_t_1, kpts_t_1, img_t, kpts_t, good_matches, None)
+            output_image = cv2.drawMatches(
+                img_t_1, kpts_t_1, img_t, kpts_t, good_matches[:100], None
+            )
             cv2.imshow("Tracked ORB", output_image)
+            cv2.imwrite(f"orb/{len(self.poses)}.png", output_image)
         return np.array(matched_kpts_t_1), np.array(matched_kpts_t)
 
     def _project_2d_kpts_to_3d(self, depth, matched_kpts):

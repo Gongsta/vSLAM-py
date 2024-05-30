@@ -1,4 +1,4 @@
-# vSLAM-py
+# vSLAM-py (WORK-IN-PROGRESS)
 A lightweight implementation of real-time Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to debug, and abandoned after writing basic visual odometry code.
 
 Uses the following libraries (installed through `pip`):
@@ -7,13 +7,26 @@ Uses the following libraries (installed through `pip`):
 - Pangolin (for real-time visualization)
     - Note: Pangolin is not available on PyPI, though I'm [pushing for it](https://github.com/stevenlovegrove/Pangolin/issues/925)
 
-
 Sources of inspiration:
 - [slambook-en](https://github.com/gaoxiang12/slambook-en/blob/master/slambook-en.pdf) (BEST textbook to learn visual SLAM)
 - [pyslam](https://github.com/luigifreda/pyslam/tree/master)
 - [twitchslam](https://github.com/geohot/twitchslam/blob/master/slam.py)
 - ORB-SLAM1, ORB-SLAM2, and DSO papers
 - https://github.com/niconielsen32/ComputerVision
+
+Currently sitting at ~0.14m translation error on the TUM-RGBD dataset (more info below). 
+
+ORB Feature matching with outlier filtering
+
+
+https://github.com/Gongsta/vSLAM-py/assets/43485866/7ac61970-2fe6-49ab-87ab-c60c1bffcb5d
+
+
+Estimated pose (green is ground truth pose, red is estimated pose)
+
+
+https://github.com/Gongsta/vSLAM-py/assets/43485866/3dedd824-2fb5-40e5-9052-7f81aa0a1e1e
+
 
 
 ## Installation
@@ -29,9 +42,11 @@ Then, install the Python libraries
 pip install -r requirements.txt
 ```
 
+Note that you will have to install pyPangolin yourself at the moment.
+
 ## Usage
 
-Run the monocular camera visual odometry:
+Run the monocular camera visual odometry, which uses epipolar geometry to estimate the camera pose:
 ```
 python3 main_mono_camera.py
 ```
@@ -74,11 +89,14 @@ However, monocular SLAM is more accessible, and everyone can just try it on thei
 
 ### Timeline
 03-20-2024: Initial commit for python. Project started in C++, but I transitioned to Python for ease of development.
+
 04-29-2024: Add working frontend for visual odometry.
+
 05-12-204: Add bundle adjustment.
+
 05-21-2024: Add benchmarking with TUM-RGBD dataset to track improvements in data (finally...).
 
-### Benchmark
+### Benchmarking
 The goal is to incrementally improve this SLAM system, while minimizing complexity, and guaranteeing real-time performance.
 
 I will be benchmarking against the [fr1/desk]() dataset.

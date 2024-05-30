@@ -19,9 +19,11 @@ def main():
     )  # Required to get Zed and Pangolin working in different processes
 
     # --------- Download Dataset ---------
-    # dataset_name = "rgbd_dataset_freiburg1_xyz" # for debugging
+    dataset_name = "rgbd_dataset_freiburg1_xyz" # for debugging
     # dataset_name = "rgbd_dataset_freiburg1_rpy" # for debugging
-    dataset_name = "rgbd_dataset_freiburg1_desk"
+    # dataset_name = "rgbd_dataset_freiburg1_desk"
+    # dataset_name = "rgbd_dataset_freiburg1_room"
+    # dataset_name = "rgbd_dataset_freiburg3_walking_static"
     # dataset_name = "rgbd_dataset_freiburg3_long_office_household" # big dataset
     if not os.path.exists(dataset_name):
         path_to_zip_file = f"{dataset_name}.zip"
@@ -91,13 +93,9 @@ def main():
     cv_img_queue = mp.Queue()
     # frontend -> renderer
     renderer_queue = mp.Queue()
-    frontend_backend_queue = mp.Queue()
-    backend_frontend_queue = mp.Queue()
 
     # frontend -> loop_closure
     descriptors_queue = mp.Queue()
-    # loop_closure -> backend
-    loop_closure_queue = mp.Queue()
     # frontend -> visualizer
     vis_queue = mp.Queue()
 
@@ -122,7 +120,6 @@ def main():
         process_backend,
         render,
         visualize_path,
-        loop_closure,
     )
 
     image_grabber = mp.Process(
@@ -130,9 +127,6 @@ def main():
     )
 
     renderer_proc = mp.Process(target=render, args=(renderer_queue,))
-    loop_closure_proc = mp.Process(
-        target=loop_closure, args=(descriptors_queue, loop_closure_queue)
-    )
 
     frontend_proc = mp.Process(
         target=process_frontend,
@@ -184,7 +178,6 @@ def main():
     if not FAST:
         path_visualizer_proc.start()
         renderer_proc.start()
-        # loop_closure_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
