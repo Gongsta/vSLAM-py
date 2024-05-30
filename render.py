@@ -91,7 +91,7 @@ class Renderer:
         self.render_background_video(image)
 
         # ------- Render 3D Objects -------
-        self.render_apple(apple_img.shape[1], apple_img.shape[0], 0.5)
+        self.render_apple(apple_img.shape[1], apple_img.shape[0], 0.3)
 
         if self.debug:
             print("pose cam\n", w_T_k)
@@ -147,7 +147,7 @@ class Renderer:
 
         glDisable(GL_TEXTURE_2D)
 
-    def render_apple(self, width, height, scale, base_x=4.0, base_y=4.0, base_z=1.0):
+    def render_apple(self, width, height, scale, base_x=0.0, base_y=0.0, base_z=2.0):
         """
         TODO: Figure this out
         """
