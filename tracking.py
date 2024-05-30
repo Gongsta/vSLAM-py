@@ -142,7 +142,9 @@ class Tracking:
         self.frames: List[Frame] = []
         self.keyframes: List[Frame] = []
         self.map_points: List[MapPoint] = []
-        self.map_point_descs = np.empty((0, 32), dtype=np.uint8)  # 32x32=256-bit binary ORB descriptors
+        self.map_point_descs = np.empty(
+            (0, 32), dtype=np.uint8
+        )  # 32x32=256-bit binary ORB descriptors
 
         self.frames_elapsed_since_keyframe = 0
 
@@ -248,7 +250,7 @@ class Tracking:
         curr_frame = self.match_map_points(prev_frame, curr_frame)
 
         # ---------- Expand search to find more map points current frame -----------
-        # keyframes_to_use = self.keyframes[-1:-2:-1]  # use the last 2 frames to find additional points
+        # keyframes_to_use = self.frames[-2:-4:-1]  # use the last 2 frames to find additional points
         # for keyframe in keyframes_to_use:
         #     curr_frame = self.match_map_points(keyframe, curr_frame)
 
@@ -300,7 +302,8 @@ class Tracking:
 
         # ---------- Determine if is keyframe-----------
         # When inserting a new keyframe, all features become map points
-        if len(p_2d) < 200 or self.frames_elapsed_since_keyframe > 20:
+        # if len(p_2d) < 100 or self.frames_elapsed_since_keyframe > 20:
+        if len(p_2d) < 50:
             keyframe = self.add_keyframe_tracking(curr_frame)
             self.send_keyframe_to_mapping(curr_frame)  # frame without updated map points
             curr_frame = keyframe
@@ -402,7 +405,7 @@ class Tracking:
             & (projected_points[:, 1] < self.img_height)
         )
 
-        # TODO: add mask for points that are too far away, and where big angle between viewing direction and mean viewing direction
+        # TODO: add mask for points that are too far away?
         mean_viewing_angle = np.array(
             [
                 (
@@ -454,6 +457,7 @@ class Tracking:
                 good_matches,
                 None,
             )
+            cv2.imwrite(f"orb_tracking/{len(self.frames)}.png", output_image)
             cv2.imshow("Tracked ORB", output_image)
             cv2.waitKey(1)
 
@@ -562,7 +566,7 @@ class Map:
         self.keyframes.append(frame)
 
     def optimize(self):
-        if len(self.keyframes) <= 5:
+        if len(self.keyframes) < 5:
             return
         self.ba.optimize(self.keyframes, self.map_points)  # inplace update
 

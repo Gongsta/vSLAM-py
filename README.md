@@ -89,11 +89,14 @@ However, monocular SLAM is more accessible, and everyone can just try it on thei
 
 ### Timeline
 03-20-2024: Initial commit for python. Project started in C++, but I transitioned to Python for ease of development.
+
 04-29-2024: Add working frontend for visual odometry.
+
 05-12-204: Add bundle adjustment.
+
 05-21-2024: Add benchmarking with TUM-RGBD dataset to track improvements in data (finally...).
 
-### Benchmark
+### Benchmarking
 The goal is to incrementally improve this SLAM system, while minimizing complexity, and guaranteeing real-time performance.
 
 I will be benchmarking against the [fr1/desk]() dataset.

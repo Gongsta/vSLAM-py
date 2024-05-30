@@ -192,6 +192,8 @@ def grab_rgbd_images_sim(rgb_images, depth_images, timestamps, cv_img_queue):
             break
 
         cv_img_queue.put((cv_img_left, cv_depth, timestamp))
+        import cv2
+        cv2.imwrite(f"raw/{image_counter}.png", cv_img_left)
 
 
 def grab_stereo_images_sim(stereo_images, depth_images, timestamps, cv_img_queue):
@@ -341,8 +343,8 @@ def process_tracking(
 
         renderer_queue.put((cv_img_left, tracker.frames[-1].pose))
         map_points = [pt.position for pt in tracker.map_points]
-        # poses = [frame.pose for frame in tracker.frames]
-        poses = [frame.pose for frame in tracker.keyframes]
+        poses = [frame.pose for frame in tracker.frames]
+        # poses = [frame.pose for frame in tracker.keyframes]
         vis_queue.put((poses, map_points))
 
         # if counter % 50 == 0:  # Run backend every 50 frames

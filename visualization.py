@@ -8,7 +8,9 @@ from scipy.spatial.transform import Rotation as R
 class PangoVisualizer:
     def __init__(self, title="Trajectory Viewer", width=1280, height=720) -> None:
 
-        self.debug = True
+        self.debug = False
+        self.width = width
+        self.height = height
         self.win = pango.CreateWindowAndBind(title, width, height)
         glEnable(GL_DEPTH_TEST)
 
@@ -17,9 +19,9 @@ class PangoVisualizer:
         )  # width, height, fx, fy, cx, cy, near clip, far clip
         # self.mv = pango.ModelViewLookAt(2.0, 2.0, 2.0, 0, 0, 0, pango.AxisZ)
         # self.mv = pango.ModelViewLookAt(0.0, 0.0, 3.5, 0, 0, 0, pango.AxisX)
-        self.mv = pango.ModelViewLookAt(1.0, 1.0, 2.0, 1.0, 1.0, 0.0, pango.AxisX)
+        # self.mv = pango.ModelViewLookAt(1.0, 1.0, 2.0, 1.0, 1.0, 0.0, pango.AxisX)
         # top down
-        # self.mv = pango.ModelViewLookAt(0.0, 0.0, 3.0, 0.0, 0.0, 0.0, pango.AxisY)
+        self.mv = pango.ModelViewLookAt(0.0, 0.0, 3.0, 0.0, 0.0, 0.0, pango.AxisY)
         self.s_cam = pango.OpenGlRenderState(self.pm, self.mv)
 
         self.handler = pango.Handler3D(self.s_cam)
@@ -110,6 +112,7 @@ class PangoVisualizer:
             # 2x2m grid with 0.1m step
             self._display_grid(2, 0.1)
 
+        landmarks = None
         if landmarks is not None:
             glPointSize(5)
             glColor3f(0.0, 1.0, 0.0)
@@ -130,6 +133,17 @@ class PangoVisualizer:
             self.draw_orientation_axis(gt_poses[-1])
 
         pango.FinishFrame()
+        self.save_image(f"path/{len(poses)}.png")
+
+    def save_image(self, filename):
+        v = self.d_cam.GetBounds()
+        buffer = np.empty((v.h, v.w, 4), dtype=np.uint8)
+        glReadBuffer(GL_BACK)
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        glReadPixels(v.l, v.b, v.w, v.h, GL_BGRA, GL_UNSIGNED_BYTE, buffer)
+        import cv2
+
+        cv2.imwrite(filename, buffer)
 
     def draw_orientation_axis(self, pose):
         # Draw orientation axis for latest position
