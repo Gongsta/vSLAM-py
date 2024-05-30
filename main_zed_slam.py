@@ -5,12 +5,11 @@ import multiprocessing as mp
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
-import cv2
 import os
 
 # Using some local imports to prevent interactions amongst libraries, specifically pangolin and pyzed
 
-USE_SIM = True
+USE_SIM = False
 
 from utils import download_file
 
@@ -79,8 +78,6 @@ def main():
 
     # frontend -> loop_closure
     descriptors_queue = mp.Queue()
-    # loop_closure -> backend
-    loop_closure_queue = mp.Queue()
     # frontend -> visualizer
     vis_queue = mp.Queue()
 
@@ -109,9 +106,6 @@ def main():
         )
 
     renderer_proc = mp.Process(target=render, args=(renderer_queue,))
-    loop_closure_proc = mp.Process(
-        target=loop_closure, args=(descriptors_queue, loop_closure_queue)
-    )
 
     frontend_proc = mp.Process(
         target=process_frontend,
@@ -155,14 +149,12 @@ def main():
     frontend_proc.start()
     path_visualizer_proc.start()
     renderer_proc.start()
-    loop_closure_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
     frontend_proc.join()
     path_visualizer_proc.join()
     renderer_proc.join()
-    loop_closure_proc.join()
     # backend_proc.join()
 
 
@@ -238,7 +230,7 @@ def grab_images_realtime(cv_img_queue):
     sl_depth = sl.Mat()
     while True:
         if zed.grab() == sl.ERROR_CODE.SUCCESS:
-            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT)
+            timestamp = zed.get_timestamp(sl.TIME_REFERENCE.CURRENT).data_ns
             zed.retrieve_image(sl_stereo_img, sl.VIEW.SIDE_BY_SIDE)
             zed.retrieve_measure(sl_depth, sl.MEASURE.DEPTH)
             cv_stereo_img = sl_stereo_img.get_data()[
@@ -295,6 +287,7 @@ def process_frontend(
             renderer_queue.put((cv_img_left, vo.poses[-1]))
             vis_queue.put((vo.poses.copy(), vo.landmarks_3d[-1].copy()))
 
+        import cv2
         key = cv2.waitKey(1)
         if key == "q":
             break
@@ -366,6 +359,7 @@ def process_tracking(
         # kpts_t, descs_t = vo._compute_orb(cv_img_left)
         # descriptors_queue.put(descs_t)
 
+        import cv2
         key = cv2.waitKey(1)
         if key == "q":
             break
@@ -395,18 +389,6 @@ def process_backend(new_keyframe_event, map_done_optimization_event, shared_data
     # latency = 1.0 / (curr - start)
     # print(f"Running at {latency} hz")
     # start = curr
-
-
-def loop_closure(descriptors_queue, loop_closure_queue):
-    from loop_closure import LoopClosure  # local import
-
-    lc = LoopClosure()
-    while True:
-        descriptors = descriptors_queue.get()
-        scores, max_idx = lc.query(descriptors)
-        if scores is not None:
-            print("Loop Closure Detected")
-            loop_closure_queue.put((scores, max_idx))
 
 
 if __name__ == "__main__":
