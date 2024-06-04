@@ -22,7 +22,7 @@ pango_optical_T_canonical = np.linalg.inv(canonical_T_pango_optical)
 class Renderer:
     """Renders the display that one would see in the VR Headset."""
 
-    def __init__(self, title="VR Display", width=672, height=376, save_render=False) -> None:
+    def __init__(self, title="VR Display", width=1280, height=720, save_render=False) -> None:
         self.debug = False
         self.win = pango.CreateWindowAndBind(title, width, height)
         self.width = width
@@ -102,11 +102,22 @@ class Renderer:
         pango.FinishFrame()
 
         if self.save_render:
-            self.d_cam.SaveOnRender(f"renders/render{self.counter}.jpg")
+            self.save_image(f"renders/{self.counter}.png")
 
         self.counter += 1
 
+    def save_image(self, filename):
+        v = self.d_cam.GetBounds()
+        buffer = np.empty((v.h, v.w, 4), dtype=np.uint8)
+        glReadBuffer(GL_BACK)
+        glPixelStorei(GL_PACK_ALIGNMENT, 1)
+        glReadPixels(v.l, v.b, v.w, v.h, GL_BGRA, GL_UNSIGNED_BYTE, buffer)
+        import cv2
+
+        cv2.imwrite(filename, buffer)
+
     def render_background_video(self, image):
+        image = np.fliplr(image)  # flip horizontal
         self.texture.Upload(image[:, :, :3].copy(), GL_BGR, GL_UNSIGNED_BYTE)
         glEnable(GL_TEXTURE_2D)
         self.texture.Bind()
@@ -147,7 +158,7 @@ class Renderer:
 
         glDisable(GL_TEXTURE_2D)
 
-    def render_apple(self, width, height, scale, base_x=0.0, base_y=0.0, base_z=2.0):
+    def render_apple(self, width, height, scale, base_x=0.0, base_y=0.0, base_z=1.0):
         """
         TODO: Figure this out
         """

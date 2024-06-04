@@ -36,7 +36,7 @@ class VOMethod(Enum):
 
 class VisualOdometry:
     def __init__(
-        self, cx, cy, fx, baseline=1, initial_pose=np.eye(4), visualize=True, save_path=True
+        self, cx, cy, fx, baseline=1, initial_pose=np.eye(4), visualize=False, save_path=True
     ) -> None:
         # --------- Visualization ---------
         self.visualize = visualize

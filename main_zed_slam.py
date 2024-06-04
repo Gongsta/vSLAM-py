@@ -72,14 +72,14 @@ def main():
 
     # --------- Queues for sharing data across Processes ---------
     # image grabber -> frontend
-    cv_img_queue = mp.Queue()
+    cv_img_queue = mp.Queue(maxsize=5)
     # frontend -> renderer
-    renderer_queue = mp.Queue()
+    renderer_queue = mp.Queue(maxsize=1)
 
     # frontend -> loop_closure
     descriptors_queue = mp.Queue()
     # frontend -> visualizer
-    vis_queue = mp.Queue()
+    vis_queue = mp.Queue(maxsize=1)
 
     # Create a Manager object to manage shared state
     manager = mp.Manager()
