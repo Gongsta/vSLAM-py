@@ -24,9 +24,6 @@ class VOMethod(Enum):
     - 3D-2D (depth/stereo camera): Uses 3D points (at t-1) and 2D points (at t) to estimate camera motion. This is solved through PnP.
         - PnP itself can be solved in many ways, such as DLT, P3P, etc.
     - 3D-3D (depth/stereo camera): Uses two sets of 3D points (at t-1 and t) to estimate camera motion. This is solved through ICP.
-
-    We also need to estimate camera motion over a longer time window due to drift and high amount of noise.
-    The solution is to use bundle adjustment.
     """
 
     VO_2D_2D = 1
@@ -35,6 +32,14 @@ class VOMethod(Enum):
 
 
 class VisualOdometry:
+    """
+    This is the most simple form of Visual Odometry, which takes in images taken at consecutive time frames
+    and computes the camera motion. It does NOT keep track of features/landmarks over multiple frames.
+
+    For an implementation that does, see `tracking.py`. It grows in complexity as we introduce keyframes,
+    image to map tracking,etc.
+    """
+
     def __init__(
         self, cx, cy, fx, baseline=1, initial_pose=np.eye(4), visualize=True, save_path=True
     ) -> None:
@@ -50,7 +55,7 @@ class VisualOdometry:
         self.img_left_queue = []
         self.depth_queue = []
 
-        # --------- Detectors (for Frontend) ---------
+        # --------- Feature Detectors and Matchers ---------
         self.disparity_estimator = StereoSGBM.create(
             minDisparity=0, numDisparities=128, blockSize=5
         )
@@ -62,22 +67,12 @@ class VisualOdometry:
         search_params = dict(checks=50)
         self.flann = cv2.FlannBasedMatcher(indexParams=index_params, searchParams=search_params)
 
-        # --------- States (used in Bundle Adjustment in Backend) ---------
-        self.BA_WINDOW = 100  # Optimize over the last 100 frames
-        # TODO: Only hold frames that have useful information??
+        # --------- States ---------
+        self.poses = [initial_pose]  # length T, each pose is a 4x4 SE3 matrix
+        self.relative_poses = []  # length T-1, since relative
         self.landmarks_2d_prev = [None]
         self.landmarks_2d = [None]  # List of landmarks at each time frame, in camera frame
         self.landmarks_3d = [None]  # List of landmarks at each time frame, in world frame
-
-        # Trying this out for better performance
-        self.GLOBAL_landmarks_2d = []
-        self.GLOBAL_landmarks_3d = []
-
-        # Relative pose transforms at each time frame, pose is a 4x4 SE3 matrix
-        self.poses = [initial_pose]  # length T
-        self.relative_poses = []  # length T-1, since relative
-
-        # TODO: Need an API redesign, since I want to track features over a window, instead of only consecutive time frames. Also, I want to visualize the pose in real-time
 
         # --------- Camera Parameters and Matrices ---------
         self.cx = cx
@@ -91,10 +86,6 @@ class VisualOdometry:
         self.Q = np.array(
             [[1, 0, 0, -cx], [0, 1, 0, -cy], [0, 0, 0, -fx], [0, 0, -1.0 / baseline, 0]]
         )
-
-        # --------- keyframe TODO ---------
-        self.keyframe_queue = []
-        self.keyframe_poses = [np.eye(4)]
 
     @staticmethod
     def _form_transf(R, t):
@@ -176,12 +167,12 @@ class VisualOdometry:
                 _, R, t, _ = cv2.recoverPose(E, F1, F2, cameraMatrix=self.K)
                 t_scaled = 0.02 * t
 
-                T = self._form_transf(R, np.squeeze(t_scaled))
-                # old_T_new
-                T = np.linalg.inv(T)
+                T = self._form_transf(R, np.squeeze(t_scaled))  # new_T_old
+                T = np.linalg.inv(T)  # old_T_new
                 self.relative_poses.append(T)
-                # w_T_k_new = w_T_k_old * k_old_T_k_new
-                self.poses.append(self.poses[-1] @ self.relative_poses[-1])
+                self.poses.append(
+                    self.poses[-1] @ self.relative_poses[-1]
+                )  # w_T_k_new = w_T_k_old * k_old_T_k_new
 
             except Exception as e:
                 print("Optimization failed", e)
@@ -200,14 +191,9 @@ class VisualOdometry:
             T = self._minimize_reprojection_error(matched_kpts_t, points_3d_t_1)
             self.relative_poses.append(T)
             self.poses.append(self.poses[-1] @ self.relative_poses[-1])
-            # Keyframe solution
-            # # w_T_p = w_T_keyframe * keyframe_T_p
-            # self.poses.append(self.keyframe_poses[-1] @ self.relative_poses[-1])
-            # if len(self.poses) % 20 == 0:
-            #     self.keyframe_poses.append(self.poses[-1])
 
         else:
-            # 3D-3D method
+            # 3D-3D - Solve by ICP
             raise NotImplementedError("3D-3D method not implemented")
 
         if self.save_path:
@@ -221,7 +207,7 @@ class VisualOdometry:
         if method == VOMethod.VO_2D_2D:
             return T
 
-        # ---------- Store poses and landmarks that will be used by backend -----------
+        # ---------- Store landmarks for debugging -----------
         depth_t = self.depth_queue[-1]
         points_3d_t = self._project_2d_kpts_to_3d(depth_t, matched_kpts_t)
         points_3d_t, matched_kpts_t, matched_kpts_t_1 = self._drop_invalid_points(
@@ -238,131 +224,20 @@ class VisualOdometry:
 
         self.landmarks_3d.append(world_points_3d_t)
 
-        # # ---------- Local Mapping -----------
-        # if len(self.GLOBAL_landmarks_3d) == 0:  # Create first set of 3d landmarks if not existent
-        #     self.GLOBAL_landmarks_3d = list(world_points_3d_t)
-        #     self.GLOBAL_landmarks_2d.append(
-        #         {tuple(kpt): i for i, kpt in enumerate(matched_kpts_t_1)}
-        #     )  # time 0
-        #     self.GLOBAL_landmarks_2d.append(
-        #         {tuple(kpt): i for i, kpt in enumerate(matched_kpts_t)}
-        #     )  # time 1
-
-        # else:  # Track new points from previous, and update if new landmarks are detected
-        #     landmark_2d_t_1 = self.GLOBAL_landmarks_2d[-1]
-        #     dic = {}
-        #     for i, kpt in enumerate(matched_kpts_t_1):
-        #         kpt = tuple(kpt)
-        #         if kpt in landmark_2d_t_1:  # O(1) lookup
-        #             idx = landmark_2d_t_1[kpt]
-        #         else:
-        #             # Add new 3D landmark. Note that these new 3d landmarks might only be measured once
-        #             idx = len(self.GLOBAL_landmarks_3d)
-        #             self.GLOBAL_landmarks_3d.append(world_points_3d_t[i])
-
-        #         dic[tuple(matched_kpts_t[i])] = idx
-
-        #     self.GLOBAL_landmarks_2d.append(dic)
-
-        # # Run local mapping
-        # if len(self.poses) % 30 == 0:
-        #     print("local mapping")
-        #     # do it only for the last 10 keyframes
-        #     # self.poses[-10:], self.landmarks_3d = self.solve_better(
-        #     #     self.poses[-10:], self.landmarks_2d[-10:], self.landmarks_3d
-        #     # )
-        #     self.poses, self.GLOBAL_landmarks_3d = self.solve_better(
-        #         self.poses, self.GLOBAL_landmarks_2d, self.GLOBAL_landmarks_3d
-        #     )
-
         return T
-
-    def solve_better(self, poses, landmarks_2d, landmarks_3d, num_iterations=10):
-        """
-        Optimize poses and points in the local window. Visual odometry suffers from lots of drift, so we need to do local bundle adjusment.
-
-        each landmark is tracked form t and t-1.
-
-        Parameters
-        ----------
-        landmarks_2d_prev: Previous 2d landmarks
-        landmarks_2d: array of 2d landmarks at time t
-        landmarks_3d: 3d landmarks
-        num_iterations (int): The maximum number of iterations to run the optimization for.
-        """
-
-        # ----------- Bundle Adjustment -----------
-        print(
-            f"Running Bundle Adjustment with {len(poses)} poses and {len(landmarks_3d)} landmarks"
-        )
-
-        optimizer = g2o.SparseOptimizer()
-        solver = g2o.BlockSolverSE3(g2o.LinearSolverEigenSE3())  # TODO: Try PCG solver
-        solver = g2o.OptimizationAlgorithmLevenberg(solver)
-        optimizer.set_algorithm(solver)
-
-        # Add Camera
-        cam = g2o.CameraParameters(self.fx, (self.cx, self.cy), 0)
-        cam.set_id(0)
-        optimizer.add_parameter(cam)
-
-        # Add camera poses
-        for i, curr_pose in enumerate(poses):
-            v_se3 = g2o.VertexSE3Expmap()
-            v_se3.set_id(i)
-            v_se3.set_estimate(g2o.SE3Quat(curr_pose[:3, :3], curr_pose[:3, 3]))
-            if i < 2:
-                v_se3.set_fixed(True)
-            optimizer.add_vertex(v_se3)
-
-        # Add 3d landmarks
-        landmarks_3d_used = [False] * len(landmarks_3d)
-        for i, landmark_3d in enumerate(landmarks_3d):
-            # landmark_3d ~ np.array([x, y, z])
-            vp = g2o.VertexPointXYZ()
-            vp.set_id(len(poses) + i)
-            vp.set_marginalized(True)
-            vp.set_estimate(landmark_3d)
-            optimizer.add_vertex(vp)
-
-        # Add measurements
-        for i, landmarks_2d_t in enumerate(landmarks_2d):
-            for landmark_2d, landmark_3d_i in landmarks_2d_t.items():
-                # Edge constraint
-                edge = g2o.EdgeProjectXYZ2UV()
-                edge.set_vertex(0, optimizer.vertex(len(poses) + landmark_3d_i))
-                edge.set_vertex(1, optimizer.vertex(i))
-                landmarks_3d_used[landmark_3d_i] = True
-                edge.set_measurement(landmark_2d)
-                edge.set_information(np.identity(2))
-                edge.set_robust_kernel(g2o.RobustKernelHuber())
-                edge.set_parameter_id(0, 0)
-                optimizer.add_edge(edge)
-
-        print("num vertices:", len(optimizer.vertices()))
-        print("num edges:", len(optimizer.edges()))
-        optimizer.initialize_optimization()
-        optimizer.optimize(num_iterations)
-
-        # ----------- Update State -----------
-        # Camera poses
-        poses = [optimizer.vertex(i).estimate().to_homogeneous_matrix() for i in range(len(poses))]
-
-        # Landmarks positions have also shifted, so we need to update the state for all landmarks that are not fixed
-        for i in range(len(landmarks_3d)):
-            if landmarks_3d_used[i]:
-                landmarks_3d[i] = optimizer.vertex(len(poses) + i).estimate()
-
-        # if self.visualize:
-        #     positions = [T[:3, 3] for T in poses]
-        #     orientations = [T[:3, :3] for T in poses]
-        #     self.vis.update(positions, orientations, landmarks_3d[-1])
-        # Optimized parameters
-        return poses, landmarks_3d
 
     def _minimize_reprojection_error(self, points_2d, points_3d):
         """
         Refer to SLAM textbook for formulation. Solved with g2o.
+
+        Parameters
+        ----------
+        points_2d (ndarray): 2D points
+        points_3d (ndarray): 3D points
+
+        Returns
+        -------
+        T: The transform old_T_new
         """
         assert len(points_2d) == len(points_3d)
         optimizer = g2o.SparseOptimizer()
@@ -504,6 +379,7 @@ class VisualOdometry:
     def _visualize_depth(self, cv_depth_map):
         # Replace NaN values with 5.0m
         depth_viz = np.nan_to_num(cv_depth_map, nan=5.0)
+
         # Clip to (0.0m, 5.0m) for visualization
         depth_viz = np.clip(depth_viz, 0.0, 5.0)
         depth_viz = cv2.normalize(depth_viz, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
@@ -562,9 +438,9 @@ class VisualOdometry:
         except ValueError:
             pass
 
-        print("length of matches BEFORE filtering", len(good_matches))
-        if len(good_matches) < 4 or not use_homography:
+        if not use_homography or len(good_matches) < 4:
             return good_matches
+
         # Find the homography matrix using RANSAC, needs at least 4 points
         if type(kpts_t_1[0]) == cv2.KeyPoint:
             src_pts = np.float32([kpts_t_1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
@@ -576,7 +452,6 @@ class VisualOdometry:
         H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
         # Use the mask to select inlier matches
         good_matches = [m for m, msk in zip(good_matches, mask) if msk[0] == 1]
-        print("length of matches AFTER filtering", len(good_matches))
         return good_matches
 
     def _match_2d_kpts(self, kpts_t_1, kpts_t, descs_t_1, descs_t):

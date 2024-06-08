@@ -1,17 +1,12 @@
 import numpy as np
 from argparse import ArgumentParser
-
+import os
 import multiprocessing as mp
+from utils import download_file
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
-import os
-
-# Using some local imports to prevent interactions amongst libraries, specifically pangolin and pyzed
-
 USE_SIM = False
-
-from utils import download_file
 
 
 def main():
@@ -46,40 +41,11 @@ def main():
     cy = K[1, 2]
     fx = K[0, 0]
     baseline = calibration["baseline"]
-    # else:
-    # Importing zed at the top of the file causes issues with pangolin
-
-    # zed = sl.Camera()
-    # # Set configuration parameters
-    # init_params = sl.InitParameters()
-    # init_params.camera_resolution = sl.RESOLUTION.VGA
-    # # Open the camera
-    # err = zed.open(init_params)
-    # if err != sl.ERROR_CODE.SUCCESS:
-    #     print(repr(err))
-    #     zed.close()
-    #     exit(1)
-
-    # # Zed Camera Paramters
-    # cx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cx
-    # cy = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.cy
-    # fx = zed.get_camera_information().camera_configuration.calibration_parameters.left_cam.fx
-    # baseline = (
-    #     zed.get_camera_information().camera_configuration.calibration_parameters.get_camera_baseline()
-    # )
-
-    # zed.close()
 
     # --------- Queues for sharing data across Processes ---------
-    # image grabber -> frontend
-    cv_img_queue = mp.Queue()
-    # frontend -> renderer
-    renderer_queue = mp.Queue()
-
-    # frontend -> loop_closure
-    descriptors_queue = mp.Queue()
-    # frontend -> visualizer
-    vis_queue = mp.Queue()
+    cv_img_queue = mp.Queue()  # image grabber -> frontend
+    renderer_queue = mp.Queue()  # frontend -> renderer
+    vis_queue = mp.Queue()  # frontend -> visualizer
 
     # Create a Manager object to manage shared state
     manager = mp.Manager()
@@ -113,7 +79,6 @@ def main():
             cv_img_queue,
             vis_queue,
             renderer_queue,
-            descriptors_queue,
             cx,
             cy,
             fx,
@@ -130,7 +95,6 @@ def main():
             shared_data,
             vis_queue,
             renderer_queue,
-            descriptors_queue,
             cx,
             cy,
             fx,
@@ -185,6 +149,7 @@ def grab_rgbd_images_sim(rgb_images, depth_images, timestamps, cv_img_queue):
 
         cv_img_queue.put((cv_img_left, cv_depth, timestamp))
         import cv2
+
         cv2.imwrite(f"raw/{image_counter}.png", cv_img_left)
 
 
@@ -260,7 +225,6 @@ def process_frontend(
     cv_img_queue,
     vis_queue,
     renderer_queue,
-    descriptors_queue,
     cx,
     cy,
     fx,
@@ -288,6 +252,7 @@ def process_frontend(
             vis_queue.put((vo.poses.copy(), vo.landmarks_3d[-1].copy()))
 
         import cv2
+
         key = cv2.waitKey(1)
         if key == "q":
             break
@@ -300,7 +265,6 @@ def process_tracking(
     shared_data,
     vis_queue,
     renderer_queue,
-    descriptors_queue,
     cx,
     cy,
     fx,
@@ -360,6 +324,7 @@ def process_tracking(
         # descriptors_queue.put(descs_t)
 
         import cv2
+
         key = cv2.waitKey(1)
         if key == "q":
             break
