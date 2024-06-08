@@ -24,6 +24,24 @@ def extract(tar_url, extract_path="."):
             extract(item.name, "./" + item.name[: item.name.rfind("/")])
 
 
+def project_points(points, pose, K):
+    """
+    points: in world frame
+    pose: camera pose in world frame
+    """
+    point_homogeneous = np.hstack([points, np.ones((points.shape[0], 1))])  # (N, 4)
+    k_T_w = np.linalg.inv(pose)
+    # p_k = k_T_w @ p_w
+    camera_homogeneous = (k_T_w @ point_homogeneous.T).T  # (N,4)
+    projected = (K @ camera_homogeneous[:, :3].T).T  # (N,3)
+    return projected[:, :2] / projected[:, 2, np.newaxis]
+
+
+def angle_between(v1, v2):
+    cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
+    return np.arccos(cos_angle)
+
+
 def _compute_absolute_poses(self, relative_poses, include_initial=True):
     curr_pose = np.eye(4)
     absolute_poses = []

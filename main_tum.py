@@ -106,7 +106,7 @@ def main():
     from main_stereo_slam import (
         grab_rgbd_images_sim,
         process_vo,
-        process_tracking,
+        process_frontend,
         process_backend,
         visualize_path,
     )
@@ -128,8 +128,8 @@ def main():
         ),
     )
 
-    tracking_proc = mp.Process(
-        target=process_tracking,
+    frontend_proc = mp.Process(
+        target=process_frontend,
         args=(
             cv_img_queue,
             new_keyframe_event,
@@ -151,15 +151,20 @@ def main():
 
     path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue, gt_poses))
 
+    USE_VO = False # Set to True to see performance of VO instead of SLAM
     image_grabber.start()
-    # vo_proc.start() # uncomment to see performance of VO, but comment out tracking_proc
-    tracking_proc.start()
+    if USE_VO:
+        vo_proc.start()
+    else:
+        frontend_proc.start()
     path_visualizer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
-    # vo_proc.join()
-    tracking_proc.join()
+    if USE_VO:
+        vo_proc.join()
+    else:
+        frontend_proc.join()
     path_visualizer_proc.join()
     # backend_proc.join()
 

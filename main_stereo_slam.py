@@ -82,8 +82,8 @@ def main():
         ),
     )
 
-    tracking_proc = mp.Process(
-        target=process_tracking,
+    frontend_proc = mp.Process(
+        target=process_frontend,
         args=(
             cv_img_queue,
             new_keyframe_event,
@@ -106,13 +106,13 @@ def main():
 
     image_grabber.start()
     # vo_proc.start()
-    tracking_proc.start()
+    frontend_proc.start()
     path_visualizer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
     vo_proc.join()
-    tracking_proc.join()
+    frontend_proc.join()
     path_visualizer_proc.join()
     # backend_proc.join()
 
@@ -237,7 +237,7 @@ def process_vo(
             break
 
 
-def process_tracking(
+def process_frontend(
     cv_img_queue,
     new_keyframe_event,
     map_done_optimization_event,

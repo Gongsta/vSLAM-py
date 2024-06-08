@@ -1,12 +1,15 @@
 import numpy as np
 import cv2
 import copy
-from collections import defaultdict
 from scipy.spatial.transform import Rotation
+from vo import VisualOdometry
+from utils import project_points, angle_between
+from typing import List
 
 """
 Heavily inspired by the ORB-SLAM approach.
 """
+
 
 class Frame:  # keyframe is the same
     def __init__(self, timestamp, pose, kpts, descs, points_3d, img=None):
@@ -22,77 +25,8 @@ class Frame:  # keyframe is the same
 
         assert len(kpts) == len(descs) == len(points_3d)
 
-        # To be filled with *index* of associated map point for each keypoint
+        # To be filled with *index* of associated map point for each keypoint. None means no association
         self.map_point_ids = [None] * len(kpts)
-
-        # Denote which keypoints are associated to a map point
-
-
-class CovisibilityGraph:
-    """Implemented through adjacency list representation."""
-
-    def __init__(self):
-        self.neighbors = defaultdict(list)
-
-    """
-    Each node is a keyframe and an edge between two keyframes exists if they share observations of the
-    same map points (at least 15),
-    """
-
-    def add_edge(self, kf1, kf2, weight):
-        self.neighbors[kf1].append((kf2, weight))
-        self.neighbors[kf2].append((kf1, weight))
-
-    def get_neighbors(self, keyframe, min_weight=10):
-        return [kf for kf, weight in self.neighbors[keyframe] if weight >= min_weight]
-
-
-def project_points(points, pose, K):
-    """
-    points: in world frame
-    pose: camera pose in world frame
-    """
-    point_homogeneous = np.hstack([points, np.ones((points.shape[0], 1))])  # (N, 4)
-    k_T_w = np.linalg.inv(pose)
-    # p_k = k_T_w @ p_w
-    camera_homogeneous = (k_T_w @ point_homogeneous.T).T  # (N,4)
-    projected = (K @ camera_homogeneous[:, :3].T).T  # (N,3)
-    return projected[:, :2] / projected[:, 2, np.newaxis]
-
-
-def project_point(point, pose, K):
-    point_homogeneous = np.append(point, 1)
-    projected = K @ (pose @ point_homogeneous)[:3]
-    return projected[:2] / projected[2]
-
-
-def angle_between(v1, v2):
-    cos_angle = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
-    return np.arccos(cos_angle)
-
-
-def distance(point, camera_center):
-    return np.linalg.norm(point - camera_center)
-
-
-def normalize_rotation_matrix(R):
-    Q, R = np.linalg.qr(R)
-    # Ensure the diagonal elements of R are positive
-    D = np.diag(np.sign(np.diag(R)))
-    Q = Q @ D
-    return Q
-
-
-def normalize_pose(pose):
-    R_normalized = normalize_rotation_matrix(pose[:3, :3])
-    pose[:3, :3] = R_normalized
-    return pose
-
-
-from vo import VisualOdometry
-
-
-import dbow
 
 
 class Tracking:
@@ -121,12 +55,11 @@ class Tracking:
 
         # --------- Multiprocessing to communicate with Mapping thread ---------
         self.new_keyframe_event = False
-        self.disable_multiprocessing = True # True for ease of debugging
         self.new_keyframe = None
         self.processed_new_keyframe = None
 
-        K = np.array([[self.fx, 0, self.cx], [0, self.fx, self.cy], [0, 0, 1]])
-        # By default, mapping is done in a separate process (logic implemented at a higher level of abstraction).
+        # By default, mapping is done in a separate process (see main_stereo_slam.py)
+        self.disable_multiprocessing = True
         # disable multiprocessing for easier debugging
         if self.disable_multiprocessing:
             self.map = Map(cx, cy, fx)  # run mapping in the same thread
@@ -256,12 +189,12 @@ class Tracking:
         if not self.tracking_success:  # found enough corresponding points
             # ---------- Relocalization with respect to keyframe with most matches -----------
             print("relocalizing")
-            descs = [dbow.ORB.from_cv_descriptor(desc) for desc in curr_frame.descs]
-            scores = self.db.query(descs)
-            keyframe_id = np.argmax(scores)
-            # Try to find matches based on this keyframe
-            curr_frame.pose = self.frames[keyframe_id].pose
-            curr_frame = self.match_map_points(self.keyframes[keyframe_id], curr_frame)
+            # descs = [dbow.ORB.from_cv_descriptor(desc) for desc in curr_frame.descs]
+            # scores = self.db.query(descs)
+            # keyframe_id = np.argmax(scores)
+            # # Try to find matches based on this keyframe
+            # curr_frame.pose = self.frames[keyframe_id].pose
+            # curr_frame = self.match_map_points(self.keyframes[keyframe_id], curr_frame)
             self.tracking_success = True
 
         # ---------- Solve for Motion -----------
@@ -299,7 +232,7 @@ class Tracking:
         # ---------- Determine if is keyframe, this greatly affects performance of SLAM -----------
         # When inserting a new keyframe, all features become map points
         if len(p_2d) < 150 or self.frames_elapsed_since_keyframe > 20:
-        # if len(p_2d) < 50:
+            # if len(p_2d) < 50:
             keyframe = self.add_keyframe_tracking(curr_frame)
             self.send_keyframe_to_mapping(curr_frame)  # frame without updated map points
             curr_frame = keyframe
@@ -483,9 +416,6 @@ class Tracking:
         return matched_points, good_matches
 
 
-from typing import List
-
-
 class MapPoint:
     def __init__(self, position, desc, keyframe_id, keyframe_position):
         self.position = position  # world coordinate system
@@ -517,7 +447,8 @@ class MapPoint:
         self.mean_viewing_dir = mean_dir
 
 
-from backend import BundleAdjustment
+from optimizer import BundleAdjustment
+
 
 class Map:
     def __init__(

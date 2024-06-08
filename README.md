@@ -1,5 +1,5 @@
 # vSLAM-py (WORK-IN-PROGRESS)
-A lightweight implementation of real-time Visual Odometry and Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to write and debug as a 1-person toy project.
+A beginner's attempt at a lightweight implementation of real-time Visual Odometry and Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to write and debug as a 1-person toy project.
 
 Uses the following libraries (installed through `pip`):
 - OpenCV (for feature detection / matching)
@@ -61,7 +61,7 @@ python3 main_stereo_slam.py
 ```
 
 ### Datasets
-I use the KITTI dataset (a small subsample) and the TUM-RGBD dataset to benchmark.
+I use the KITTI dataset (a small subsample) and the TUM-RGBD dataset to benchmark performance, as these datasets provide ground-truth pose data.
 
 TUM Dataset (RGB-D)
 ```
@@ -83,6 +83,9 @@ python3 main_kitti.py
 - Landmarks / Map points: 3D points in the world of features that are detected and tracked by the camera
 
 ## Discussions
+### Known Issues
+- Pangolin and OpenCV windows don't play well together. I generally try to run them in separate processes so that they don't interfere with each other
+
 ### Development Process
 I've mostly been developing using the TUM-RGBD dataset and using the ZED stereo camera. This way, I directly obtain a rectified image, as well as the camera intrinsics. Generally, for your own camera, you'll need to do the camera calibration yourself to figure out these values (`fx`, `fy`, `cx`, `cy`, `baseline`).
 
