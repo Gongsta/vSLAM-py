@@ -70,8 +70,8 @@ def main():
             args=(cv_img_queue,),
         )
 
-    frontend_proc = mp.Process(
-        target=process_frontend,
+    vo_proc = mp.Process(
+        target=process_vo,
         args=(
             cv_img_queue,
             vis_queue,
@@ -105,12 +105,14 @@ def main():
     path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue,))
 
     image_grabber.start()
-    frontend_proc.start()
+    # vo_proc.start()
+    tracking_proc.start()
     path_visualizer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
-    frontend_proc.join()
+    vo_proc.join()
+    tracking_proc.join()
     path_visualizer_proc.join()
     # backend_proc.join()
 
@@ -197,14 +199,12 @@ def visualize_path(vis_queue, gt_poses=None):
     vis = PangoVisualizer(title="Path Visualizer")
     while True:
         poses, landmarks = vis_queue.get()
-        # vis.update(poses, landmarks, gt_poses[: len(poses)])
         vis.update(poses, landmarks, gt_poses)
 
 
-def process_frontend(
+def process_vo(
     cv_img_queue,
     vis_queue,
-    renderer_queue,
     cx,
     cy,
     fx,
@@ -212,7 +212,7 @@ def process_frontend(
     initial_pose=np.eye(4),
 ):
 
-    from frontend import VisualOdometry, VOMethod
+    from visualodometry import VisualOdometry, VOMethod
 
     vo = VisualOdometry(cx, cy, fx, baseline, initial_pose)
     counter = 0
@@ -228,7 +228,6 @@ def process_frontend(
         counter += 1
 
         if counter > 1:
-            renderer_queue.put((cv_img_left, vo.poses[-1]))
             vis_queue.put((vo.poses.copy(), vo.landmarks_3d[-1].copy()))
 
         import cv2
@@ -244,7 +243,6 @@ def process_tracking(
     map_done_optimization_event,
     shared_data,
     vis_queue,
-    renderer_queue,
     cx,
     cy,
     fx,
@@ -278,7 +276,6 @@ def process_tracking(
                 tracker.synchronize(shared_data["keyframes"], shared_data["map_points"])
             map_done_optimization_event.clear()
 
-        renderer_queue.put((cv_img_left, tracker.frames[-1].pose))
         map_points = [pt.position for pt in tracker.map_points]
         poses = [frame.pose for frame in tracker.frames]
         vis_queue.put((poses, map_points))

@@ -1,5 +1,5 @@
 # vSLAM-py (WORK-IN-PROGRESS)
-A lightweight implementation of real-time Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to debug, and abandoned after writing basic visual odometry code.
+A lightweight implementation of real-time Visual Odometry and Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to write and debug as a 1-person toy project.
 
 Uses the following libraries (installed through `pip`):
 - OpenCV (for feature detection / matching)
@@ -7,17 +7,20 @@ Uses the following libraries (installed through `pip`):
 - Pangolin (for real-time visualization)
     - Note: Pangolin is not available on PyPI, though I'm [pushing for it](https://github.com/stevenlovegrove/Pangolin/issues/925)
 
-Sources of inspiration:
+
+Sources of guidance / inspiration:
 - [slambook-en](https://github.com/gaoxiang12/slambook-en/blob/master/slambook-en.pdf) (BEST textbook to learn visual SLAM)
+- [Lecture: Photogrammetry I & II (2021, Uni Bonn, Cyrill Stachniss)](https://www.youtube.com/playlist?list=PLgnQpQtFTOGRYjqjdZxTEQPZuFHQa7O7Y) (BEST lectures)
 - [pyslam](https://github.com/luigifreda/pyslam/tree/master)
 - [twitchslam](https://github.com/geohot/twitchslam/blob/master/slam.py)
 - ORB-SLAM1, ORB-SLAM2, and DSO papers
 - https://github.com/niconielsen32/ComputerVision
 
-Currently sitting at ~0.14m translation error on the TUM-RGBD dataset (more info below).
+I also have [notes](https://stevengong.co/notes/Visual-SLAM) written up for Visual SLAM hosted on my website, which has many more useful resources.
+
+Currently sitting at ~0.14m translation error on the TUM-RGBD dataset, running purely Visual Odometry (more info below). I'm currently having trouble getting the bundle adjustment on the stereo SLAM to work well.
 
 ORB Feature matching with outlier filtering
-
 
 https://github.com/Gongsta/vSLAM-py/assets/43485866/7ac61970-2fe6-49ab-87ab-c60c1bffcb5d
 
@@ -26,7 +29,6 @@ Estimated pose (green is ground truth pose, red is estimated pose)
 
 
 https://github.com/Gongsta/vSLAM-py/assets/43485866/3dedd824-2fb5-40e5-9052-7f81aa0a1e1e
-
 
 
 ## Installation
@@ -42,36 +44,47 @@ Then, install the Python libraries
 pip install -r requirements.txt
 ```
 
-Note that you will have to install pyPangolin yourself at the moment.
+Note that for visualization, you need [Python bindings for Pangolin](https://github.com/stevenlovegrove/Pangolin?tab=readme-ov-file#building) installed. This isn't mandatory, but useful to visualize the camera poses in real-time. Matplotlib isn't well-made for that.
 
 ## Usage
 
-Run the monocular camera visual odometry, which uses epipolar geometry to estimate the camera pose (not the most accurate):
+### Mono Camera
+Run monocular visual odometry, which uses epipolar geometry from contiguous images to estimate the camera pose (not the most accurate):
 ```
-python3 main_mono_camera.py
+python3 main_mono_vo.py
 ```
 
-Run on the TUM dataset if you don't have a camera:
-```python
+### Stereo Camera
+Run stereo SLAM, which uses keyframes, builds a local map, minimizes reprojection error and uses bundle adjustment to estimate camera pose:
+```
+python3 main_stereo_slam.py
+```
+
+### Datasets
+I use the KITTI dataset (a small subsample) and the TUM-RGBD dataset to benchmark.
+
+TUM Dataset (RGB-D)
+```
 python3 main_tum.py
 ```
 
-Run the stereo camera:
+KITTI Dataset (monocular)
 ```
-python3 main_stereo_camera.py
+python3 main_kitti.py
 ```
+
 
 ## Important assumptions with your own cameras
-Timestamps should be filled in correctly (default is incrementing by 0.1s). This is important for the optimization to work correctly.
-
-For depth cameras
-- Unknown depth values are expected to be populated with `np.NaN` (not 0). This is important for the optimization to work correctly
+- Timestamps should be filled in correctly (default is incrementing by 0.1s). This is important for the optimization to work correctly.
+- For depth cameras, unknown depth values are expected to be populated with `np.NaN` (not 0). This is important for the optimization to work correctly
 
 ## Terminology
 - Feature: A point in the image that can be tracked over time
-- Landmarks / Map points: 3D points in the world of features that are detected by the camera
+- Landmarks / Map points: 3D points in the world of features that are detected and tracked by the camera
 
 ## Discussions
+### Development Process
+I've mostly been developing using the TUM-RGBD dataset and using the ZED stereo camera. This way, I directly obtain a rectified image, as well as the camera intrinsics. Generally, for your own camera, you'll need to do the camera calibration yourself to figure out these values (`fx`, `fy`, `cx`, `cy`, `baseline`).
 
 ### Why Python
 Python is much more flexible than C++, and easier to set up. Trying this stuff should be as easy as running 2-3 commands in the terminal. If it was written in C++, you'd need to install dependencies, compile the code, and then run it. In Python, you simply need to `pip` install the requirements, and you are good to go. Also, I find it a lot easier to debug a Python system (at this minimum codebase scale). In C++, I'd need something like `gdb`.
@@ -79,8 +92,8 @@ Python is much more flexible than C++, and easier to set up. Trying this stuff s
 Of course, Python will never beat C++ performance due to its interpreted nature. However, all libraries I use are written in C++ under the hood (OpenCV, g2o, Pangolin), so the performance hit is minimal. Python is merely a high-level interface to these libraries.
 
 Overall, it would have taken me a lot longer to write this in C++, and much less people would want to try it out.
-### Monocular vs. Stereo Visual SLAM
 
+### Monocular vs. Stereo Visual SLAM
 Mono and stereo visual odometry share many of the same techniques.
 Only difference with Mono is that ground-truth depth can be obtained directly (unless you run deep monocular depth estimation, or use a RGB-D camera).
 

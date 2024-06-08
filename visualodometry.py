@@ -33,15 +33,15 @@ class VOMethod(Enum):
 
 class VisualOdometry:
     """
-    This is the most simple form of Visual Odometry, which takes in images taken at consecutive time frames
+    This is the most basic simple form of Visual Odometry, which takes in images taken at consecutive time frames
     and computes the camera motion. It does NOT keep track of features/landmarks over multiple frames.
 
-    For an implementation that does, see `tracking.py`. It grows in complexity as we introduce keyframes,
-    image to map tracking,etc.
+    For a more complex implementation, see `tracking.py`. We introduce keyframes,
+    local mapping, etc.
     """
 
     def __init__(
-        self, cx, cy, fx, baseline=1, initial_pose=np.eye(4), visualize=False, save_path=True
+        self, cx, cy, fx, baseline=1, initial_pose=np.eye(4), visualize=True, save_path=False
     ) -> None:
         # --------- Visualization ---------
         self.visualize = visualize

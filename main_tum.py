@@ -17,9 +17,9 @@ def main():
     )  # Required to get Zed and Pangolin working in different processes
 
     # --------- Download Dataset ---------
-    dataset_name = "rgbd_dataset_freiburg1_xyz"  # for debugging
+    # dataset_name = "rgbd_dataset_freiburg1_xyz"  # for debugging
     # dataset_name = "rgbd_dataset_freiburg1_rpy" # for debugging
-    # dataset_name = "rgbd_dataset_freiburg1_desk"
+    dataset_name = "rgbd_dataset_freiburg1_desk"
     # dataset_name = "rgbd_dataset_freiburg1_room"
     # dataset_name = "rgbd_dataset_freiburg3_walking_static"
     # dataset_name = "rgbd_dataset_freiburg3_long_office_household" # big dataset
@@ -87,15 +87,8 @@ def main():
     initial_pose = gt_poses[0]
 
     # --------- Queues for sharing data across Processes ---------
-    # image grabber -> frontend
-    cv_img_queue = mp.Queue()
-    # frontend -> renderer
-    renderer_queue = mp.Queue()
-
-    # frontend -> loop_closure
-    descriptors_queue = mp.Queue()
-    # frontend -> visualizer
-    vis_queue = mp.Queue()
+    cv_img_queue = mp.Queue()  # image grabber -> frontend
+    vis_queue = mp.Queue()  # frontend -> visualizer
 
     # Create a Manager object to manage shared state
     manager = mp.Manager()
@@ -110,12 +103,11 @@ def main():
     map_done_optimization_event = mp.Event()
 
     # --------- Processes ---------
-    from main_zed_slam import (
+    from main_stereo_slam import (
         grab_rgbd_images_sim,
-        process_frontend,
+        process_vo,
         process_tracking,
         process_backend,
-        render,
         visualize_path,
     )
 
@@ -123,15 +115,11 @@ def main():
         target=grab_rgbd_images_sim, args=(rgb_images, depth_images, timestamps, cv_img_queue)
     )
 
-    renderer_proc = mp.Process(target=render, args=(renderer_queue,))
-
-    frontend_proc = mp.Process(
-        target=process_frontend,
+    vo_proc = mp.Process(
+        target=process_vo,
         args=(
             cv_img_queue,
             vis_queue,
-            renderer_queue,
-            descriptors_queue,
             cx,
             cy,
             fx,
@@ -148,8 +136,6 @@ def main():
             map_done_optimization_event,
             shared_data,
             vis_queue,
-            renderer_queue,
-            descriptors_queue,
             cx,
             cy,
             fx,
@@ -166,16 +152,15 @@ def main():
     path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue, gt_poses))
 
     image_grabber.start()
+    # vo_proc.start() # uncomment to see performance of VO, but comment out tracking_proc
     tracking_proc.start()
     path_visualizer_proc.start()
-    renderer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
-    frontend_proc.join()
+    # vo_proc.join()
     tracking_proc.join()
     path_visualizer_proc.join()
-    renderer_proc.join()
     # backend_proc.join()
 
 

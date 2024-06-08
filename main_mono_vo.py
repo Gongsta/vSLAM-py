@@ -1,22 +1,15 @@
 import numpy as np
-from argparse import ArgumentParser
 import os
 import time
 import cv2
-from frontend import VisualOdometry
+
+from visualodometry import VisualOdometry
 from visualization import PangoVisualizer
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
+
 def main():
-    parser = ArgumentParser()
-    parser.add_argument("--visualize", default=True, action="store_true", help="Show visualization")
-    args = parser.parse_args()
-
-    x_t = []
-    y_t = []
-    z_t = []
-
     # --------- Init Camera Camera ---------
     capLeft = cv2.VideoCapture(0)
 
@@ -34,8 +27,6 @@ def main():
     vo = VisualOdometry(cx, cy, fx, baseline)
     vis = PangoVisualizer()
 
-    poses = []
-    curr_pose = None
     while capLeft.isOpened() and running:
         ret, cv_img_left = capLeft.read()
         if ret:

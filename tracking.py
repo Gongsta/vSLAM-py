@@ -8,7 +8,6 @@ from scipy.spatial.transform import Rotation
 Heavily inspired by the ORB-SLAM approach.
 """
 
-
 class Frame:  # keyframe is the same
     def __init__(self, timestamp, pose, kpts, descs, points_3d, img=None):
         self.timestamp = timestamp
@@ -90,7 +89,7 @@ def normalize_pose(pose):
     return pose
 
 
-from frontend import VisualOdometry
+from visualodometry import VisualOdometry
 
 
 import dbow
@@ -118,11 +117,11 @@ class Tracking:
         self.baseline = baseline
 
         # --------- dbow ---------
-        self.db = dbow.Database.load("pretrained_tum_db.pickle")
+        # self.db = dbow.Database.load("pretrained_tum_db.pickle")
 
         # --------- Multiprocessing to communicate with Mapping thread ---------
         self.new_keyframe_event = False
-        self.disable_multiprocessing = True
+        self.disable_multiprocessing = True # True for ease of debugging
         self.new_keyframe = None
         self.processed_new_keyframe = None
 
@@ -290,9 +289,6 @@ class Tracking:
         # --------- Estimate Camera Pose by minimizing reprojection error -----------
         T = self.vo._minimize_reprojection_error(p_2d, p_3d_k)
         estimated_pose = prev_frame.pose @ T
-        # print("Before normalization: ", estimated_pose)
-        # estimated_pose = normalize_pose(estimated_pose)
-        # print("After: ", estimated_pose)
         curr_frame.pose = estimated_pose
         # Update 3d points estimate based on the computed pose TODO: check this?
         # points_3d_w = (
@@ -300,10 +296,10 @@ class Tracking:
         # ).T[:, :3]
         # curr_frame.points_3d = points_3d_w
 
-        # ---------- Determine if is keyframe-----------
+        # ---------- Determine if is keyframe, this greatly affects performance of SLAM -----------
         # When inserting a new keyframe, all features become map points
-        # if len(p_2d) < 100 or self.frames_elapsed_since_keyframe > 20:
-        if len(p_2d) < 50:
+        if len(p_2d) < 150 or self.frames_elapsed_since_keyframe > 20:
+        # if len(p_2d) < 50:
             keyframe = self.add_keyframe_tracking(curr_frame)
             self.send_keyframe_to_mapping(curr_frame)  # frame without updated map points
             curr_frame = keyframe
@@ -344,8 +340,8 @@ class Tracking:
         self.frames_elapsed_since_keyframe = 0
 
         # --------- Add Descriptors to Dbow Database ---------
-        descs = [dbow.ORB.from_cv_descriptor(desc) for desc in curr_frame.descs]
-        self.db.add(descs)
+        # descs = [dbow.ORB.from_cv_descriptor(desc) for desc in curr_frame.descs]
+        # self.db.add(descs)
 
         # --------- Add Map Points ---------
         # Use a temporary frame, since the original new frame must be untouched when sent to mapping
@@ -522,7 +518,6 @@ class MapPoint:
 
 
 from backend import BundleAdjustment
-
 
 class Map:
     def __init__(

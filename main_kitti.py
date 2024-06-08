@@ -1,25 +1,15 @@
 import numpy as np
-from argparse import ArgumentParser
-import matplotlib.pyplot as plt
+from matplotlib import pyplot as plt
 import time
 import cv2
-from matplotlib import pyplot as plt
-
-import sys
 import os
 
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
-from frontend import VisualOdometry
+from visualodometry import VisualOdometry
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
 
 def main():
-    parser = ArgumentParser()
-    parser.add_argument("--visualize", default=True, action="store_true", help="Show visualization")
-    args = parser.parse_args()
-
     capLeft = cv2.VideoCapture("KITTI_sequence_1/image_l/%6d.png")
 
     gt_poses = []
@@ -41,7 +31,7 @@ def main():
     cy = K[1, 2]
     baseline = 0.5
 
-    vo = VisualOdometry(cx, cy, fx, baseline, initial_pose=gt_poses[0])
+    vo = VisualOdometry(cx, cy, fx, baseline, initial_pose=gt_poses[0], visualize=True)
     gt_path = []
     pred_path = []
     while capLeft.isOpened() and running:

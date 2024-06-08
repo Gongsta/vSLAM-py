@@ -8,7 +8,7 @@ from scipy.spatial.transform import Rotation as R
 class PangoVisualizer:
     def __init__(self, title="Trajectory Viewer", width=1280, height=720) -> None:
 
-        self.debug = False
+        self.debug = True
         self.width = width
         self.height = height
         self.win = pango.CreateWindowAndBind(title, width, height)
@@ -17,11 +17,11 @@ class PangoVisualizer:
         self.pm = pango.ProjectionMatrix(
             width, height, 420, 420, width / 2, height / 2, 0.1, 1000
         )  # width, height, fx, fy, cx, cy, near clip, far clip
-        self.mv = pango.ModelViewLookAt(1.0, 1.0, 1.0, 0, 0, 0, pango.AxisZ)
+        # self.mv = pango.ModelViewLookAt(1.0, 1.0, 1.0, 0, 0, 0, pango.AxisZ)
         # self.mv = pango.ModelViewLookAt(0.0, 0.0, 3.5, 0, 0, 0, pango.AxisX)
         # self.mv = pango.ModelViewLookAt(1.0, 1.0, 2.0, 1.0, 1.0, 0.0, pango.AxisX)
         # top down
-        # self.mv = pango.ModelViewLookAt(0.0, 0.0, 3.0, 0.0, 0.0, 0.0, pango.AxisY)
+        self.mv = pango.ModelViewLookAt(0.0, 0.0, 3.0, 0.0, 0.0, 0.0, pango.AxisY)
         self.s_cam = pango.OpenGlRenderState(self.pm, self.mv)
 
         self.handler = pango.Handler3D(self.s_cam)
@@ -96,16 +96,16 @@ class PangoVisualizer:
         glLineWidth(2)
 
         # Draw Trajectory
-        # for i in range(len(positions) - 1):
-        #     glColor3f(1.0, 0.0, 0.0)
-        #     glBegin(GL_LINES)
-        #     p1 = positions[i]
-        #     p2 = positions[i + 1]
-        #     glVertex3d(p1[0], p1[1], p1[2])
-        #     glVertex3d(p2[0], p2[1], p2[2])
-        #     glEnd()
+        for i in range(len(positions) - 1):
+            glColor3f(1.0, 0.0, 0.0)
+            glBegin(GL_LINES)
+            p1 = positions[i]
+            p2 = positions[i + 1]
+            glVertex3d(p1[0], p1[1], p1[2])
+            glVertex3d(p2[0], p2[1], p2[2])
+            glEnd()
 
-        # self.draw_orientation_axis(poses[-1])
+        self.draw_orientation_axis(poses[-1])
 
         if self.debug:
             pango.glDrawAxis(1)
@@ -117,7 +117,6 @@ class PangoVisualizer:
             glColor3f(0.0, 1.0, 0.0)
             pango.glDrawPoints(landmarks)
 
-        print(gt_poses)
         if gt_poses is not None:
             positions = [T[:3, 3] for T in gt_poses]
             # Draw Trajectory
@@ -129,11 +128,11 @@ class PangoVisualizer:
                 glVertex3d(p1[0], p1[1], p1[2])
                 glVertex3d(p2[0], p2[1], p2[2])
                 glEnd()
-            # Draw orientaiton axis for latest position
+            # Draw orientation axis for latest position
             self.draw_orientation_axis(gt_poses[-1])
 
         pango.FinishFrame()
-        self.save_image(f"path/{len(poses)}.png")
+        # self.save_image(f"path/{len(poses)}.png")
 
     def save_image(self, filename):
         v = self.d_cam.GetBounds()
