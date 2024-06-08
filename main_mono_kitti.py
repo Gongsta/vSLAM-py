@@ -1,11 +1,15 @@
 import numpy as np
 from argparse import ArgumentParser
 import matplotlib.pyplot as plt
-
-import os
 import time
 import cv2
 from matplotlib import pyplot as plt
+
+import sys
+import os
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from frontend import VisualOdometry
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
@@ -37,22 +41,16 @@ def main():
     cy = K[1, 2]
     baseline = 0.5
 
-    vo = VisualOdometry(cx, cy, fx, baseline)
+    vo = VisualOdometry(cx, cy, fx, baseline, initial_pose=gt_poses[0])
     gt_path = []
     pred_path = []
-    curr_pose = None
     while capLeft.isOpened() and running:
         ret, cv_img_left = capLeft.read()
         if ret:
             start = time.time()
 
-            T = vo.process_frame(cv_img_left)
-            if curr_pose is None:
-                curr_pose = gt_poses[0]
-            else:
-                curr_pose = np.matmul(curr_pose, np.linalg.inv(T))
-
-            pred_path.append((curr_pose[0, 3], curr_pose[2, 3]))
+            vo.process_frame(cv_img_left)
+            pred_path.append((vo.poses[-1][0, 3], vo.poses[-1][2, 3]))
 
             curr = time.time()
             latency = 1.0 / (curr - start)

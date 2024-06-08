@@ -44,7 +44,6 @@ def main():
 
     # --------- Queues for sharing data across Processes ---------
     cv_img_queue = mp.Queue(maxsize=5)  # image grabber -> frontend
-    renderer_queue = mp.Queue(maxsize=1)  # frontend -> renderer
     vis_queue = mp.Queue(maxsize=1)  # frontend -> visualizer
 
     # Create a Manager object to manage shared state
@@ -71,14 +70,11 @@ def main():
             args=(cv_img_queue,),
         )
 
-    renderer_proc = mp.Process(target=render, args=(renderer_queue,))
-
     frontend_proc = mp.Process(
         target=process_frontend,
         args=(
             cv_img_queue,
             vis_queue,
-            renderer_queue,
             cx,
             cy,
             fx,
@@ -94,7 +90,6 @@ def main():
             map_done_optimization_event,
             shared_data,
             vis_queue,
-            renderer_queue,
             cx,
             cy,
             fx,
@@ -112,27 +107,12 @@ def main():
     image_grabber.start()
     frontend_proc.start()
     path_visualizer_proc.start()
-    renderer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
     frontend_proc.join()
     path_visualizer_proc.join()
-    renderer_proc.join()
     # backend_proc.join()
-
-
-def render(cv_img_queue):
-    from render import Renderer
-
-    renderer = None
-
-    while True:
-        image, pose = cv_img_queue.get()
-        width, height = image.shape[1], image.shape[0]
-        if renderer is None:
-            renderer = Renderer(width=width, height=height)
-        renderer.update(pose, image)
 
 
 def grab_rgbd_images_sim(rgb_images, depth_images, timestamps, cv_img_queue):
@@ -301,27 +281,7 @@ def process_tracking(
         renderer_queue.put((cv_img_left, tracker.frames[-1].pose))
         map_points = [pt.position for pt in tracker.map_points]
         poses = [frame.pose for frame in tracker.frames]
-        # poses = [frame.pose for frame in tracker.keyframes]
         vis_queue.put((poses, map_points))
-
-        # if counter % 50 == 0:  # Run backend every 50 frames
-        #     frontend_backend_queue.put(
-        #         (
-        #             vo.poses.copy(),
-        #             vo.landmarks_2d.copy(),
-        #             vo.landmarks_3d.copy(),
-        #         )
-        #     )
-
-        # backend might be using an older version of the poses and landmarks, since backend is non-blocking
-        # BAD: Using the empty() function is unreliable
-        # if not backend_frontend_queue.empty():
-        #     poses, landmarks_3d = backend_frontend_queue.get()
-        #     vo.poses = poses
-        #     vo.landmarks_3d = landmarks_3d
-
-        # kpts_t, descs_t = vo._compute_orb(cv_img_left)
-        # descriptors_queue.put(descs_t)
 
         import cv2
 
@@ -349,11 +309,6 @@ def process_backend(new_keyframe_event, map_done_optimization_event, shared_data
                 shared_data["keyframes"] = map.keyframes  # optimized keyframes
                 shared_data["map_points"] = map.map_points  # optimized landmarks
             map_done_optimization_event.set()
-
-    # curr = time.time()
-    # latency = 1.0 / (curr - start)
-    # print(f"Running at {latency} hz")
-    # start = curr
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import numpy as np
 from argparse import ArgumentParser
+import matplotlib.pyplot as plt
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 
@@ -9,7 +10,7 @@ import os
 
 from frontend import VisualOdometry
 
-USE_SIM = False
+USE_SIM = True
 
 if not USE_SIM:
     import pyzed.sl as sl
@@ -98,13 +99,14 @@ def main():
                     :, :, :3
                 ]  # Last channel is padded for byte alignment
                 cv_img_left = cv_stereo_img[:, : image_size.width, :]
-                # cv_img_right = cv_stereo_img[:, image_size.width:, :]
                 cv_depth = sl_depth.get_data()
 
             else:
                 break
 
-        T = vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
+        vo.process_frame(cv_img_left, img_right=None, depth=cv_depth)
+        print(vo.poses)
+        plt.plot(vo.poses)
 
         key = cv2.waitKey(1)
         if key == "q":

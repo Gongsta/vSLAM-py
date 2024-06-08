@@ -1,5 +1,5 @@
 import numpy as np
-import os, tarfile
+import tarfile
 import urllib.request
 import math
 

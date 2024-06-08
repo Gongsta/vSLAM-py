@@ -165,9 +165,7 @@ class VisualOdometry:
                     F2 = F2[mask.ravel() == 1]
                 # Decompose the Essential matrix into R and t
                 _, R, t, _ = cv2.recoverPose(E, F1, F2, cameraMatrix=self.K)
-                t_scaled = 0.02 * t
-
-                T = self._form_transf(R, np.squeeze(t_scaled))  # new_T_old
+                T = self._form_transf(R, np.squeeze(t))  # new_T_old
                 T = np.linalg.inv(T)  # old_T_new
                 self.relative_poses.append(T)
                 self.poses.append(

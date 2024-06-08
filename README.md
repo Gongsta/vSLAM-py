@@ -14,7 +14,7 @@ Sources of inspiration:
 - ORB-SLAM1, ORB-SLAM2, and DSO papers
 - https://github.com/niconielsen32/ComputerVision
 
-Currently sitting at ~0.14m translation error on the TUM-RGBD dataset (more info below). 
+Currently sitting at ~0.14m translation error on the TUM-RGBD dataset (more info below).
 
 ORB Feature matching with outlier filtering
 
@@ -46,19 +46,19 @@ Note that you will have to install pyPangolin yourself at the moment.
 
 ## Usage
 
-Run the monocular camera visual odometry, which uses epipolar geometry to estimate the camera pose:
+Run the monocular camera visual odometry, which uses epipolar geometry to estimate the camera pose (not the most accurate):
 ```
 python3 main_mono_camera.py
-```
-
-Run the stereo camera:
-```
-python3 main_stereo_camera.py
 ```
 
 Run on the TUM dataset if you don't have a camera:
 ```python
 python3 main_tum.py
+```
+
+Run the stereo camera:
+```
+python3 main_stereo_camera.py
 ```
 
 ## Important assumptions with your own cameras

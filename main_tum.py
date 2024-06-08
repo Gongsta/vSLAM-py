@@ -5,9 +5,7 @@ from scipy.spatial.transform import Rotation as R
 
 np.random.seed(0)
 
-
 import cv2
-
 
 from utils import download_file, extract
 from eval.associate import read_file_list, associate
@@ -19,7 +17,7 @@ def main():
     )  # Required to get Zed and Pangolin working in different processes
 
     # --------- Download Dataset ---------
-    dataset_name = "rgbd_dataset_freiburg1_xyz" # for debugging
+    dataset_name = "rgbd_dataset_freiburg1_xyz"  # for debugging
     # dataset_name = "rgbd_dataset_freiburg1_rpy" # for debugging
     # dataset_name = "rgbd_dataset_freiburg1_desk"
     # dataset_name = "rgbd_dataset_freiburg1_room"
@@ -111,7 +109,6 @@ def main():
     new_keyframe_event = mp.Event()
     map_done_optimization_event = mp.Event()
 
-
     # --------- Processes ---------
     from main_zed_slam import (
         grab_rgbd_images_sim,
@@ -143,7 +140,6 @@ def main():
         ),
     )
 
-
     tracking_proc = mp.Process(
         target=process_tracking,
         args=(
@@ -167,28 +163,20 @@ def main():
         args=(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx),
     )
 
-
     path_visualizer_proc = mp.Process(target=visualize_path, args=(vis_queue, gt_poses))
 
     image_grabber.start()
-    # frontend_proc.start()
     tracking_proc.start()
-
-    FAST = False
-    if not FAST:
-        path_visualizer_proc.start()
-        renderer_proc.start()
+    path_visualizer_proc.start()
+    renderer_proc.start()
     # backend_proc.start()
 
     image_grabber.join()
-    # frontend_proc.join()
+    frontend_proc.join()
     tracking_proc.join()
-    if not FAST:
-        path_visualizer_proc.join()
-        renderer_proc.join()
-        # loop_closure_proc.join()
+    path_visualizer_proc.join()
+    renderer_proc.join()
     # backend_proc.join()
-    print("reached here")
 
 
 if __name__ == "__main__":
