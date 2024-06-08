@@ -212,7 +212,7 @@ def process_vo(
     initial_pose=np.eye(4),
 ):
 
-    from visualodometry import VisualOdometry, VOMethod
+    from vo import VisualOdometry, VOMethod
 
     vo = VisualOdometry(cx, cy, fx, baseline, initial_pose)
     counter = 0
@@ -250,7 +250,7 @@ def process_tracking(
     initial_pose=np.eye(4),
 ):
 
-    from tracking import Tracking
+    from slam import Tracking
 
     tracker = Tracking(cx, cy, fx, baseline, initial_pose)
     counter = 0
@@ -288,7 +288,7 @@ def process_tracking(
 
 
 def process_backend(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx):
-    from tracking import Map
+    from slam import Map
 
     map = Map(new_keyframe_event, map_done_optimization_event, shared_data, cx, cy, fx)
     while True:

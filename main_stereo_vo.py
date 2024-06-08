@@ -8,7 +8,7 @@ import time
 import cv2
 import os
 
-from visualodometry import VisualOdometry
+from vo import VisualOdometry
 from utils import download_file
 
 USE_SIM = True

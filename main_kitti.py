@@ -4,7 +4,7 @@ import time
 import cv2
 import os
 
-from visualodometry import VisualOdometry
+from vo import VisualOdometry
 
 np.set_printoptions(formatter={"float": lambda x: "{0:0.3f}".format(x)})
 

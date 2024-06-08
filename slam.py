@@ -89,7 +89,7 @@ def normalize_pose(pose):
     return pose
 
 
-from visualodometry import VisualOdometry
+from vo import VisualOdometry
 
 
 import dbow
