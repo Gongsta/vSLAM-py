@@ -517,7 +517,7 @@ class MapPoint:
         self.mean_viewing_dir = mean_dir
 
 
-from backend import BundleAdjustment
+from optimizer import BundleAdjustment
 
 class Map:
     def __init__(
