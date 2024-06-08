@@ -43,9 +43,9 @@ def main():
     baseline = calibration["baseline"]
 
     # --------- Queues for sharing data across Processes ---------
-    cv_img_queue = mp.Queue()  # image grabber -> frontend
-    renderer_queue = mp.Queue()  # frontend -> renderer
-    vis_queue = mp.Queue()  # frontend -> visualizer
+    cv_img_queue = mp.Queue(maxsize=5)  # image grabber -> frontend
+    renderer_queue = mp.Queue(maxsize=1)  # frontend -> renderer
+    vis_queue = mp.Queue(maxsize=1)  # frontend -> visualizer
 
     # Create a Manager object to manage shared state
     manager = mp.Manager()
