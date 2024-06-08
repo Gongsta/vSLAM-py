@@ -3,6 +3,8 @@ import cv2
 import copy
 from scipy.spatial.transform import Rotation
 from vo import VisualOdometry
+from optimizer import BundleAdjustment
+
 from utils import project_points, angle_between
 from typing import List
 
@@ -445,9 +447,6 @@ class MapPoint:
             mean_dir /= np.linalg.norm(mean_dir)
 
         self.mean_viewing_dir = mean_dir
-
-
-from optimizer import BundleAdjustment
 
 
 class Map:
