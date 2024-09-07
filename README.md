@@ -1,4 +1,4 @@
-# vSLAM-py (WORK-IN-PROGRESS)
+# vSLAM-py
 A beginner's attempt at a lightweight implementation of real-time Visual Odometry and Visual SLAM system in Python. Contains both monocular and stereo implementations. Continued from the abandoned [vSLAM](https://github.com/Gongsta/vSLAM) implementation in C++, which was too tedious to write and debug as a 1-person toy project.
 
 Uses the following libraries (installed through `pip`):
